@@ -28,12 +28,17 @@ import pyspark.ml.feature
 # Spark utils
 from ikats.core.library.spark import SSessionManager, SparkUtils
 
+# Ikats utils
+from ikats.core.resource.api import IkatsApi
+from ikats.core.data.ts import TimestampedMonoVal
+from ikats.core.library.exception import IkatsException, IkatsConflictError
+
 """
 Scale Algorithm (also named Normalize):
 For now, scaler used are:
-- Standard Scaler (also called Z-Norm): (X - X.mean(axis=0) / X.std(axis=0)
-- MinMax Scaler : (X - X.min(axis=0)) / (X.max(axis=0) - X.min(axis=0))
-- MaxAbs Scaler: X / X.abs(axis=0).max(axis=0)
+- Standard Scaler (also called Z-Norm): (X - mean) / std
+- MinMax Scaler : (X - X.min) / (X.max - X.min)
+- MaxAbs Scaler: X / max( abs(X.max), abs(X.min) )
 
 Each scaler need to have an implementation in sklearn AND pyspark.
 If you want to add a scaler, please just update classes `AvailableScaler` and `ScalerName`.
@@ -132,7 +137,7 @@ class Scaler(object):
             # Perform an inplace scaling (for performance)
             self.scaler.copy = False
 
-    def perform(self, X):
+    def perform_scaling(self, X):
         """
         Perform scaler.
             - replace the sklearn's `fit_transform()`
@@ -163,10 +168,73 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
     :param scaler: The scaler used, should be one of the AvailableScaler...
     :type scaler: str
 
-    :return: The TS list containing TS scaled
+    :return: A list of dict composed of original TSUID and the information about the new TS
     :rtype: list
+
+    ..Example: result=[{"tsuid": new_tsuid,
+                        "funcId": new_fid
+                        "origin": tsuid
+                        }, ...]
     """
-    return NotImplementedError
+    # 0/ Init Scaler object
+    # ------------------------------------------------
+    current_scaler = Scaler(scaler=scaler, spark=False)
+
+    # Init result, list of dict
+    result = []
+
+    # Perform operation iteratively on each TS
+    for tsuid in ts_list:
+
+        # 1/ Load TS content
+        # ------------------------------------------------
+        start_loading_time = time.time()
+
+        # Read TS from it's ID
+        ts_data = IkatsApi.ts.read([tsuid])[0]
+        # ts_data is np.array, shape = (2, nrow)
+
+        LOGGER.debug("TSUID: %s, Gathering time: %.3f seconds", tsuid, time.time() - start_loading_time)
+
+        # 2/ Perform scaling
+        # ------------------------------------------------
+        start_computing_time = time.time()
+
+        # ts_data is np.array [Time, Value]: apply scaler on col `Value` ([:, 1])
+        # Need to reshape this col into a (1, n_row) dataset (sklearn request)
+        scaled_data = current_scaler.perform_scaling(X=ts_data[:, 1].reshape(-1, 1))
+
+        LOGGER.debug("TSUID: %s, Computing time: %.3f seconds", tsuid, time.time() - start_computing_time)
+
+        # 3/ Merge [Dates + new_values] and save
+        # ------------------------------------------------
+        ts_result = TimestampedMonoVal(np.dstack((ts_data[:, 0], scaled_data.flat))[0])
+
+        # 4/ Save result
+        # ------------------------------------------------
+        # Save the result
+        start_saving_time = time.time()
+        short_name = "scaled"
+        new_tsuid, new_fid = save(tsuid=tsuid,
+                                  ts_result=ts_result,
+                                  short_name=short_name,
+                                  sparkified=False)
+
+        # Inherit from parent
+        IkatsApi.ts.inherit(new_tsuid, tsuid)
+
+        LOGGER.debug("TSUID: %s(%s), Result import time: %.3f seconds", new_fid, new_tsuid,
+                     time.time() - start_saving_time)
+
+        # 4/ Update result
+        # ------------------------------------------------
+        result.append({
+            "tsuid": new_tsuid,
+            "funcId": new_fid,
+            "origin": tsuid
+        })
+
+    return result
 
 
 def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000):
@@ -202,12 +270,13 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
                         "origin": tsuid
                         }, ...]
     """
-
     # 0/ Check inputs
     # ----------------------------------------------------------
     # TS list
     if type(ts_list) is not list:
         raise TypeError("Arg. type `ts_list` is {}, expected `list`".format(type(ts_list)))
+    if len(ts_list) == 0:
+        raise ValueError("`ts_list` provided is empty !")
 
     # Scaler
     if type(scaler) is not str:
@@ -216,14 +285,14 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
         raise ValueError("Arg. `scale` is {}, expected element in {}".format(scaler, list(SCALER_DICT.keys())))
 
     # Nb points by chunk
-    if nb_points_by_chunk is not int or nb_points_by_chunk < 0:
+    if type(nb_points_by_chunk) is not int or nb_points_by_chunk < 0:
         raise TypeError("Arg. `nb_points_by_chunk` must be an integer > 0, get {}".format(nb_points_by_chunk))
 
     # Spark
     if type(spark) is not bool and spark is not None:
         raise TypeError("Arg. type `spark` is {}, expected `bool` or `NoneType`".format(type(spark)))
 
-    # 1/ Check for spark usage
+    # 1/ Check for spark usage and run
     # ----------------------------------------------------------
     if spark is True or (spark is None and SparkUtils.check_spark_usage(tsuid_list=ts_list,
                                                                         nb_ts_criteria=100,
@@ -235,5 +304,76 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
         return scale(ts_list=ts_list, scaler=scaler)
 
 
+# TODO: put these two functions into module
+def save(tsuid, ts_result, short_name="scaled", sparkified=False):
+    """
+    Saves the TS to database
+    It copies some attributes from the original TSUID, that is why it needs the tsuid
+
+    :param tsuid: original TSUID used for computation
+    :type tsuid: str
+
+    :param ts_result: TS resulting of the operation
+    :type ts_result: TimestampedMonoVal
+
+    :param short_name: Name used as short name for Functional identifier
+    :type short_name: str
+
+    :param sparkified: set to True to prevent from having multi-processing,
+                       and to handle correctly the creation of TS by chunk
+    :type sparkified: bool
+
+    :return: the created TSUID and its associated FID
+    :rtype: str, str
+
+    :raise IOError: if an issue occurs during the import
+    """
+    if type(ts_result) is not TimestampedMonoVal:
+        raise TypeError('Arg `ts_result` is {}, expected TimestampedMonoVal'.format(type(ts_result)))
+
+    try:
+        # Generate new FID
+        new_fid = gen_fid(tsuid=tsuid, short_name=short_name)
+
+        # Import time series result in database
+        res_import = IkatsApi.ts.create(fid=new_fid,
+                                        data=ts_result.data,
+                                        generate_metadata=True,
+                                        parent=tsuid,
+                                        sparkified=sparkified)
+        return res_import['tsuid'], new_fid
+
+    except Exception:
+        raise IkatsException("save_rollmean() failed")
+
+
+def gen_fid(tsuid, short_name="scaled"):
+    """
+    Generate a new functional identifier (fid) for current TS (`tsuid`).
+    Return new fid (`original_fid`_`short_name`). If already exist, create new fid
+    (`original_fid`_`short_name`_`time * 1000`).
+
+    :param tsuid: original TSUID used for computation
+    :type tsuid: str
+
+    :param short_name: Name used as short name for Functional identifier
+    :type short_name: str
+
+    :return: The new fid of the TS to create.
+    :rtype: str
+    """
+    # Retrieve time series information (funcId)
+    original_fid = IkatsApi.ts.fid(tsuid=tsuid)
+
+    # Generate unique functional id for resulting time series
+    new_fid = '%s_%s' % (str(original_fid), short_name)
+    try:
+        IkatsApi.ts.create_ref(new_fid)
+    except IkatsConflictError:
+        # TS already exist, append timestamp to be unique
+        new_fid = '%s_%s_%s' % (str(original_fid), short_name, int(time.time() * 1000))
+        IkatsApi.ts.create_ref(new_fid)
+
+    return new_fid
 
 
