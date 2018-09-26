@@ -27,6 +27,7 @@ import pyspark.ml.feature
 
 # Spark utils
 from ikats.core.library.spark import SSessionManager, SparkUtils
+from pyspark.ml.feature import VectorAssembler
 
 # Ikats utils
 from ikats.core.resource.api import IkatsApi
@@ -81,6 +82,9 @@ SCALER_DICT = {
 # Example: To init sklearn (-> no spark)  Standard Scaler :
 # SCALER_DICT[AvailableScaler.ZNorm]['no_spark']()
 
+# (Intermediate) Names of created columns (during spark operation only)
+_INPUT_COL = "features"
+_OUTPUT_COL = "scaledFeatures"
 
 class Scaler(object):
     """
@@ -116,11 +120,18 @@ class Scaler(object):
         # CASE Spark=True (pyspark scaler)
         # -----------------------------
         if self.spark:
+            # Init SparkSession (necessary for init Spark Scaler)
+            SSessionManager.get()
+
             # Init pyspark.ml.feature scaler object
             self.scaler = SCALER_DICT[scaler]['spark']()
 
             # Additional arguments to set
             # --------------------------------
+            # Set input / output columns names (necessary for Spark functions)
+            self.scaler.inputCol = _INPUT_COL
+            self.scaler.outputCol = _OUTPUT_COL
+
             if scaler == AvailableScaler.ZNorm:
                 # By default, spark's Standard scaler does not center the data (X-mean)
                 self.scaler.setWithMean(True)
@@ -160,7 +171,7 @@ class Scaler(object):
 
 def scale(ts_list, scaler=AvailableScaler.ZNorm):
     """
-    Compute a scaling on a provided ts list.
+    Compute a scaling on a provided ts list ("no spark" mode).
 
     :param ts_list: List of TS to scale
     :type ts_list: list of str
@@ -176,12 +187,13 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
                         "origin": tsuid
                         }, ...]
     """
-    # 0/ Init Scaler object
-    # ------------------------------------------------
-    current_scaler = Scaler(scaler=scaler, spark=False)
-
     # Init result, list of dict
     result = []
+
+    # 0/ Init Scaler object
+    # ------------------------------------------------
+    # Init Spark Scaler
+    current_scaler = Scaler(scaler=scaler, spark=False)
 
     # Perform operation iteratively on each TS
     for tsuid in ts_list:
@@ -238,7 +250,151 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
 
 
 def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000):
-    return NotImplementedError
+    """
+    Compute a scaling on a provided ts list ("spark" mode).
+
+    :param ts_list: List of TS to scale
+    :type ts_list: list of str
+
+    :param scaler: The scaler used, should be one of the AvailableScaler...
+    :type scaler: str
+
+    :param nb_points_by_chunk: size of chunks in number of points
+    (assuming points of the time series are in same frequency and without holes)
+    :type nb_points_by_chunk: int
+
+    :return: A list of dict composed of original TSUID and the information about the new TS
+    :rtype: list
+
+    ..Example: result=[{"tsuid": new_tsuid,
+                        "funcId": new_fid
+                        "origin": tsuid
+                        }, ...]
+    """
+    # 0/ Init Scaler object
+    # ------------------------------------------------
+    current_scaler = Scaler(scaler=scaler, spark=True)
+
+    # Init result, list of dict
+    result = []
+
+    # Checking metadata availability before starting computation
+    meta_list = IkatsApi.md.read(ts_list)
+
+    # Perform operation iteratively on each TS
+    for tsuid in ts_list:
+
+        try:
+            # 1/ Retrieve meta data
+            # --------------------------------------------------------------------------
+            md = meta_list[tsuid]
+            period = int(float(md['qual_ref_period']))
+            sd = int(md['ikats_start_date'])
+            ed = int(md['ikats_end_date'])
+
+            # 2/ Get data
+            # --------------------------------------------------------------------------
+            # Import data into dataframe (["Index", "Timestamp", "Value"])
+            df, size = SSessionManager.get_ts_by_chunks_as_df(tsuid=tsuid,
+                                                              sd=sd,
+                                                              ed=ed,
+                                                              period=period,
+                                                              nb_points_by_chunk=nb_points_by_chunk)
+
+            # 3/ Calculate scaling
+            # -------------------------------
+            # TODO: from HERE, put this code into `Scale` class
+            # from
+            # https://stackoverflow.com/questions/47705919/spark-get-the-actual-cluster-centeroids-with-standardscaler
+
+            # OPERATION: Transform into `Vector` object (necessary for scaling with spark)
+            # INPUT: Spark DataFrame, with column ['Time', 'Value']
+            # OUTPUT: Spark Dataframe with columns ['Time', 'Value', _INPUT_COL]
+            # New col `_INPUT_COL` containing data to scale
+            assembler = VectorAssembler(inputCols=["Value"], outputCol=_INPUT_COL)
+
+            # Perform operation
+            data = assembler.transform(df)
+            # TODO: END
+
+            # OPERATION: Perform scaling on data frame
+            # INPUT: Spark Dataframe with columns ['Time', 'Value', _INPUT_COL]
+            # OUTPUT: Spark Dataframe with columns ['Time', 'Value', _INPUT_COL, _OUTPUT_COL]
+            # New col `_OUTPUT_COL` containing scaled data
+            scaledData = current_scaler.perform_scaling(data)
+
+            # OPERATION: Reformat dataframe to obtain ['Time', 'Value'] with proper data
+            # INPUT: Spark Dataframe with columns ['Time', 'Value', _INPUT_COL, _OUTPUT_COL]
+            # OUTPUT: Spark DataFrame, with column ['Time', 'Value']
+            # Column 'Value' contains scaled data
+            scaledData = scaledData.drop(['Value', _INPUT_COL]).\
+                withColumnRenamed(_OUTPUT_COL, 'Value')
+
+            # 4/ Save result
+            # ------------------------------------------------
+            # Save the result
+            start_saving_time = time.time()
+            short_name = "scaled"
+
+            # Generate the new functional identifier (fid) for the current TS (ts_uid)
+            new_fid = gen_fid(tsuid=tsuid, short_name=short_name)
+
+            # OPERATION: Import result by partition into database, and collect
+            # INPUT: [Timestamp, rollmean]
+            # OUTPUT: the new tsuid of the rollmean ts (not used)
+            scaledData.rdd.mapPartitions(lambda x: SparkUtils.save_data(fid=new_fid,
+                                                                        data=list(x))).collect()
+
+            # Retrieve tsuid of the saved TS
+            new_tsuid = IkatsApi.fid.tsuid(new_fid)
+            LOGGER.debug("TSUID: %s(%s), Result import time: %.3f seconds", new_fid, new_tsuid,
+                         time.time() - start_saving_time)
+
+            # TODO: Here, meta data are un-changed (?)
+            # # Inherit from parent
+            # IkatsApi.ts.inherit(new_tsuid, tsuid)
+            #
+            # # store metadata ikats_start_date, ikats_end_date and qual_nb_points
+            # if not IkatsApi.md.create(
+            #         tsuid=new_tsuid,
+            #         name='ikats_start_date',
+            #         value=sd + time_gap,
+            #         data_type=DTYPE.date,
+            #         force_update=True):
+            #     LOGGER.error("Metadata ikats_start_date couldn't be saved for TS %s", new_tsuid)
+            #
+            # if not IkatsApi.md.create(
+            #         tsuid=new_tsuid,
+            #         name='ikats_end_date',
+            #         value=ed + time_gap,
+            #         data_type=DTYPE.date,
+            #         force_update=True):
+            #     LOGGER.error("Metadata ikats_end_date couldn't be saved for TS %s", new_tsuid)
+            #
+            # # Retrieve imported number of points from database
+            # qual_nb_points = IkatsApi.ts.nb_points(tsuid=new_tsuid)
+            # if not IkatsApi.md.create(
+            #         tsuid=new_tsuid,
+            #         name='qual_nb_points',
+            #         value=qual_nb_points,
+            #         data_type=DTYPE.number,
+            #         force_update=True):
+            #     LOGGER.error("Metadata qual_nb_points couldn't be saved for TS %s", new_tsuid)
+
+        except Exception:
+            raise
+        finally:
+            SSessionManager.stop()
+
+        result.append({
+            "tsuid": new_tsuid,
+            "funcId": new_fid,
+            "origin": tsuid
+        })
+
+    # END FOR (op. on all TS performed)
+
+    return result
 
 
 def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000, spark=None):

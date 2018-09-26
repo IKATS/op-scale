@@ -71,9 +71,9 @@ def gen_ts(ts_id):
         # Expected result
         # ----------------
         # scaled with Z-Norm (X - mean / std)
-        ts_content_znorm = np.array([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]) / 2.58198890
+        ts_content_znorm = np.array([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]) / np.std([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.])
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
-        ts_content_minmax = (np.array( [-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]) - -4) / (4 - -4)
+        ts_content_minmax = (np.array([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]) - -4) / (4 - -4)
         # scaled with MaxAbs scaler X / max( abs(X.max), abs(X.min)) )
         ts_content_maxabs = np.array([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]) / 4
 
@@ -87,7 +87,7 @@ def gen_ts(ts_id):
         # Expected result
         # ----------------
         # scaled with Z-Norm (X - mean / std)
-        ts_content_znorm = (np.arange(9) - 4) / 2.58198890
+        ts_content_znorm = (np.arange(9) - 4) / np.std(np.arange(9))
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
         ts_content_minmax = np.arange(9) / 8.
         # scaled with MaxAbs scaler X / max( abs(X.max), abs(X.min)) )
@@ -131,8 +131,25 @@ def gen_ts(ts_id):
 
 class TesScale(unittest.TestCase):
     """
-    Test the scale algorithm
+    Test the scale algorithm (results are rounded with 6 digits)
     """
+
+    @staticmethod
+    def round_result(np_array, digits=6):
+        """
+        Round numpy array elements, and transform result into list.
+
+        :param np_array: The array to round
+        :type np_array: np.array
+
+        :param digits: umber of digits used after rounding (here 7)
+        :type digits: int
+
+        :return: List containing `np_array` input array, rounded.
+        :rtype: list
+        """
+        return [round(i, digits) for i in np_array]
+
     def test_Scaler(self):
         """
         Testing class `Scaler`
@@ -180,9 +197,9 @@ class TesScale(unittest.TestCase):
                 scale_ts_list(ts_list=[])
 
             # Un-existant TS
-            # msg = "Testing arguments : Error in testing un-existant `ts_list`"
-            # with self.assertRaises(ValueError, msg=msg):
-            #     scale_ts_list(ts_list=['TS which does not exist'])
+            msg = "Testing arguments : Error in testing un-existant `ts_list`"
+            with self.assertRaises(ValueError, msg=msg):
+                scale_ts_list(ts_list=['TS which does not exist'])
 
             # scaler
             # ----------------------------
@@ -219,34 +236,45 @@ class TesScale(unittest.TestCase):
             # Clean up database
             IkatsApi.ts.delete(tsuid, True)
 
-    # @unittest.skip("Scale functions not yet implemented")
     def test_scale_value(self):
         """
         Testing the result values of the scale algorithm.
         """
-        # CASE 3: Constant value
-        result = gen_ts(3)
-        tsuid = result['tsuid']
-        expected_znorm = result['expected_ZNorm']
-        try:
+        for case in list(USE_CASE.keys()):
+            # CASE 1:avg=0
+            # CASE 2: Linear curve
+            # CASE 3: Constant value
+            result = gen_ts(case)
+            tsuid = result['tsuid']
+            # Expected result (rounded with 7 digits)
+            expected_znorm = self.round_result(result['expected_ZNorm'])
+            try:
 
-            # scaler = Standard Scaler
-            scaler = AvailableScaler.ZNorm
+                # scaler = Standard Scaler
+                scaler = AvailableScaler.ZNorm
 
-            # Perform scaling, and get the resulting tsuid
-            result_tsuid = scale_ts_list([tsuid], scaler=scaler, spark=False)[0]['tsuid']
+                # Perform scaling, and get the resulting tsuid
+                result_tsuid = scale_ts_list([tsuid], scaler=scaler, spark=False)[0]['tsuid']
 
-            # Get results (column "Value" is [:, 1])
-            result_values = IkatsApi.ts.read(result_tsuid)[0][:, 1]
+                # Get results (column "Value" is [:, 1])
+                result_values = IkatsApi.ts.read(result_tsuid)[0][:, 1]
 
-            # Standard Scaler on constant data, result = list of 0.
-            msg = "Error in result of {} 'no spark' mode: get {}, expected {}".format(scaler, result_values, expected_znorm)
-            self.assertEqual(result_values.tolist(), expected_znorm.tolist(), msg=msg)
+                # Round result (default 7 digits): else, raise error
+                result_values = self.round_result(result_values)
 
-        finally:
-            IkatsApi.ts.delete(tsuid, True)
+                # Standard Scaler on constant data, result = list of 0.
+                msg = "Error in result of {} 'no spark' mode (case {}):" \
+                      " get {}, expected {}".format(scaler,
+                                                    case,
+                                                    result_values,
+                                                    expected_znorm)
 
-    @unittest.skip("Spark functions not yet implemented")
+                self.assertEqual(result_values, expected_znorm, msg=msg)
+
+            finally:
+                IkatsApi.ts.delete(tsuid, True)
+
+    # @unittest.skip("Spark functions not yet implemented")
     def test_spark(self):
         """
         Testing the result values of the scale algorithm, when spark is forced true.
