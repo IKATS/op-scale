@@ -19,7 +19,7 @@ import logging
 import unittest
 import numpy as np
 
-from ikats.algo.scale.scale import AvailableScaler, Scaler, scale_ts_list
+from ikats.algo.scale.scale import AvailableScaler, Scaler, scale_ts_list, SCALER_DICT
 from ikats.core.resource.api import IkatsApi
 
 import sklearn.preprocessing
@@ -104,8 +104,8 @@ def gen_ts(ts_id):
         # ----------------
         # scaled with Z-Norm (X - mean / std)
         ts_content_znorm = np.array([0] * 9)
-        # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
-        ts_content_minmax = ts_content_znorm
+        # scaled with MinMax scaler (X - X.min) / (X.max - X.min), 0.5 * max if min=max
+        ts_content_minmax = np.array([0.5] * 9)
         # scaled with MaxAbs scaler X / max( abs(X.max), abs(X.min)) )
         ts_content_maxabs = np.array([1.] * 9)  # same result than previous: min=0
 
@@ -124,9 +124,9 @@ def gen_ts(ts_id):
     return {"tsuid": result['tsuid'],
             "funcId": fid,
             "ts_content": ts_content,
-            "expected_ZNorm": ts_content_znorm,     # Store the 3 expected results (3 scalers)
-            "expected_MinMax": ts_content_minmax,
-            "expected_MaxAbs": ts_content_maxabs}
+            "expected_" + AvailableScaler.ZNorm: ts_content_znorm,     # Store the 3 expected results (3 scalers)
+            "expected_" + AvailableScaler.MinMax: ts_content_minmax,
+            "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}
 
 
 class TesScale(unittest.TestCase):
@@ -142,7 +142,7 @@ class TesScale(unittest.TestCase):
         :param np_array: The array to round
         :type np_array: np.array
 
-        :param digits: umber of digits used after rounding (here 7)
+        :param digits: umber of digits used after rounding (here 6)
         :type digits: int
 
         :return: List containing `np_array` input array, rounded.
@@ -171,9 +171,9 @@ class TesScale(unittest.TestCase):
         # Test implementation Z-norm with spark
         # ----------------------------------------------
         # -> Arg `WithMean` should be set to `True`
-        # msg="Error in init `Scaler` object (Z-Norm with spark), arg `WithMean` is {}, expected `True`"
-        # result = Scaler(spark=True).scaler.getWithMean()
-        # self.assertTrue(result, msg=msg.format(result))
+        msg="Error in init `Scaler` object (Z-Norm with spark), arg `WithMean` is {}, expected `True`"
+        result = Scaler(spark=True).scaler.getWithMean()
+        self.assertTrue(result, msg=msg.format(result))
 
     def test_arguments_scale_ts_list(self):
         """
@@ -240,99 +240,142 @@ class TesScale(unittest.TestCase):
         """
         Testing the result values of the scale algorithm.
         """
-        for case in list(USE_CASE.keys()):
-            # CASE 1:avg=0
-            # CASE 2: Linear curve
-            # CASE 3: Constant value
-            result = gen_ts(case)
-            tsuid = result['tsuid']
-            # Expected result (rounded with 7 digits)
-            expected_znorm = self.round_result(result['expected_ZNorm'])
-            try:
+        # For each Available scaler
+        for scaler in list(SCALER_DICT.keys()):
 
-                # scaler = Standard Scaler
-                scaler = AvailableScaler.ZNorm
+            # For each use-case
+            for case in list(USE_CASE.keys()):
+                # CASE 1:avg=0
+                # CASE 2: Linear curve
+                # CASE 3: Constant value
 
-                # Perform scaling, and get the resulting tsuid
-                result_tsuid = scale_ts_list([tsuid], scaler=scaler, spark=False)[0]['tsuid']
+                result = gen_ts(case)
+                tsuid = result['tsuid']
+                # Expected result (rounded with k digits)
+                expected = self.round_result(result['expected_' + scaler])
+                try:
 
-                # Get results (column "Value" is [:, 1])
-                result_values = IkatsApi.ts.read(result_tsuid)[0][:, 1]
+                    # Perform scaling, and get the resulting tsuid
+                    result_tsuid = scale_ts_list([tsuid], scaler=scaler, spark=False)[0]['tsuid']
 
-                # Round result (default 7 digits): else, raise error
-                result_values = self.round_result(result_values)
+                    # Get results (column "Value" is [:, 1])
+                    result_values = IkatsApi.ts.read(result_tsuid)[0][:, 1]
 
-                # Standard Scaler on constant data, result = list of 0.
-                msg = "Error in result of {} 'no spark' mode (case {}):" \
-                      " get {}, expected {}".format(scaler,
-                                                    case,
-                                                    result_values,
-                                                    expected_znorm)
+                    # Round result (default k digits): else, raise error
+                    result_values = self.round_result(result_values)
 
-                self.assertEqual(result_values, expected_znorm, msg=msg)
+                    # Standard Scaler on constant data, result = list of 0.
+                    msg = "Error in result of {} 'no spark' mode (case {}):" \
+                          " get {}, expected {}".format(scaler,
+                                                        case,
+                                                        result_values,
+                                                        expected)
 
-            finally:
-                IkatsApi.ts.delete(tsuid, True)
+                    self.assertEqual(result_values, expected, msg=msg)
+
+                finally:
+                    IkatsApi.ts.delete(tsuid, True)
 
     # @unittest.skip("Spark functions not yet implemented")
     def test_spark(self):
         """
         Testing the result values of the scale algorithm, when spark is forced true.
         """
-        # CASE 1:avg=0
+        # For each Available scaler
+        for scaler in [AvailableScaler.MaxAbs, AvailableScaler.MinMax]:#list(SCALER_DICT.keys()):
+            # For each use-case
+            for case in list(USE_CASE.keys()):
+                # CASE 1:avg=0
+                # CASE 2: Linear curve
+                # CASE 3: Constant value
 
-        # CASE 2: Linear curve
+                result = gen_ts(case)
+                tsuid = result['tsuid']
+                # Expected result (rounded with k digits)
+                expected = self.round_result(result['expected_' + scaler])
 
-        # CASE 3: Constant value
-        tsuid = gen_ts(3)['tsuid']
+                try:
 
-        try:
-            # scaler = Standard Scaler
-            scaler = AvailableScaler.ZNorm
+                    # Force spark usage
+                    result_tsuid = scale_ts_list([tsuid], scaler=scaler, spark=True)[0]['tsuid']
 
-            # Force spark usage
-            result = scale_ts_list([tsuid], scaler=scaler, spark=True)
+                    # Get results (column "Value" is [:, 1])
+                    result_values = IkatsApi.ts.read(result_tsuid)[0][:, 1]
+                    # Round result (default k digits): else, raise error
+                    result_values = self.round_result(result_values)
 
-            # Standard Scaler on constant data, result = list of 0.
-            self.assertEqual(result[:, 1], [0.]*9)
+                    # Standard Scaler on constant data, result = list of 0.
+                    msg = "Error in result of {} 'Spark' mode (case {}):\n" \
+                          " get {},\n expected {}\n" \
+                          "difference: {}".format(scaler,
+                                                  case,
+                                                  result_values,
+                                                  expected,
+                                                  [result_values[i] - expected[i] for i in range(len(expected))])
 
-        finally:
-            IkatsApi.ts.delete(tsuid, True)
+                    # Standard Scaler on constant data, result = list of 0.
+                    self.assertEqual(result_values, expected, msg=msg)
 
-    @unittest.skip("Spark functions not yet implemented")
+                finally:
+                    IkatsApi.ts.delete(tsuid, True)
+
+    # @unittest.skip("Solution not yet implemented")
     def test_diff_spark(self):
         """
         Testing difference of result between "Spark" and "No Spark"
         """
-        # scaler = Standard Scaler
-        scaler = AvailableScaler.ZNorm
+        # For each Available scaler
+        for scaler in list(SCALER_DICT.keys()):
 
-        for case in list(USE_CASE.keys()):
-            # CASE 1:avg=0
-            # CASE 2: Linear curve
-            # CASE 3: Constant value
+            # For each use-case
+            for case in list(USE_CASE.keys()):
+                # CASE 1:avg=0
+                # CASE 2: Linear curve
+                # CASE 3: Constant value
 
-            tsuid = gen_ts(case)['tsuid']
+                tsuid = gen_ts(case)['tsuid']
 
-            try:
+                try:
+                    # Result with spark FORCED
+                    # TODO: Perhaps here, modify here nb_pt_by_chunks (?)
+                    # Force spark usage
+                    result_tsuid_spark = scale_ts_list([tsuid], scaler=scaler, spark=True)[0]['tsuid']
 
-                # Result with spark FORCED
-                # TODO: Perhaps here, modify here nb_pt_by_chunks (?)
-                result_spark = scale_ts_list([tsuid], scaler=scaler, spark=True)
-                # Result with NO Spark Forced
-                result_no_spark = scale_ts_list([tsuid], scaler=scaler, spark=False)
+                    # Get results (column "Value" is [:, 1])
+                    result_spark = IkatsApi.ts.read(result_tsuid_spark)[0][:, 1]
+                    # Round result (default k digits): else, raise error
+                    result_spark = self.round_result(result_spark)
 
-                msg = "Error in compare Spark/no spark: case {} ({}) \nResult Spark: {} \nResult no spark {}."
-                # Example: "Error in compare Spark/no spark: case 1 (Null average).
-                # Result Spark: [1,2,3]
-                # Result no spark: [2,3,4]
+                    # Result with NO Spark Forced
+                    result_tsuid_no_spark = scale_ts_list([tsuid], scaler=scaler, spark=False)[0]['tsuid']
 
-                self.assertEqual(result_spark, result_no_spark, msg=msg.format(case,
-                                                                               USE_CASE[case],
-                                                                               result_spark,
-                                                                               result_no_spark))
-            finally:
-                IkatsApi.ts.delete(tsuid, True)
+                    # Get results (column "Value" is [:, 1])
+                    result_no_spark = IkatsApi.ts.read(result_tsuid_no_spark)[0][:, 1]
+                    # Round result (default k digits): else, raise error
+                    result_no_spark = self.round_result(result_no_spark)
+
+                    msg = "Error in compare Spark/no spark: case {} ({}) \n" \
+                          "Result Spark: {} \n" \
+                          "Result no spark {}.\n" \
+                          "Difference: {}".format(case,
+                                                  USE_CASE[case],
+                                                  result_spark,
+                                                  result_no_spark,
+                                                  [result_spark[i] - result_no_spark[i] for i
+                                                   in range(len(result_spark))])
+
+                    # Example: "Error in compare Spark/no spark: case 1 (Null average).
+                    # Result Spark: [1,2,3]
+                    # Result no spark: [2,3,4]
+
+                    # Just for debug...
+                    if scaler == AvailableScaler.ZNorm:
+                        print("Diff: {}".format([result_spark[i] - result_no_spark[i] for i in range(len(result_spark))]))
+
+                    self.assertEqual(result_spark, result_no_spark, msg=msg)
+
+                finally:
+                    IkatsApi.ts.delete(tsuid, True)
 
 
 

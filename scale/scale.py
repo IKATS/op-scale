@@ -33,12 +33,14 @@ from pyspark.ml.feature import VectorAssembler
 from ikats.core.resource.api import IkatsApi
 from ikats.core.data.ts import TimestampedMonoVal
 from ikats.core.library.exception import IkatsException, IkatsConflictError
+from pyspark.sql.types import DoubleType
+from pyspark.sql.functions import udf
 
 """
 Scale Algorithm (also named Normalize):
 For now, scaler used are:
 - Standard Scaler (also called Z-Norm): (X - mean) / std
-- MinMax Scaler : (X - X.min) / (X.max - X.min)
+- MinMax Scaler : (X - X.min) / (X.max - X.min), 0.5 * max if min=max
 - MaxAbs Scaler: X / max( abs(X.max), abs(X.min) )
 
 Each scaler need to have an implementation in sklearn AND pyspark.
@@ -86,6 +88,7 @@ SCALER_DICT = {
 _INPUT_COL = "features"
 _OUTPUT_COL = "scaledFeatures"
 
+
 class Scaler(object):
     """
     Wraper of sklearn / pyspark.ml scalers.
@@ -117,6 +120,8 @@ class Scaler(object):
 
         :return: A Scaler
         """
+        self.scaler_name = scaler
+
         # CASE Spark=True (pyspark scaler)
         # -----------------------------
         if self.spark:
@@ -129,8 +134,8 @@ class Scaler(object):
             # Additional arguments to set
             # --------------------------------
             # Set input / output columns names (necessary for Spark functions)
-            self.scaler.inputCol = _INPUT_COL
-            self.scaler.outputCol = _OUTPUT_COL
+            self.scaler.setInputCol(_INPUT_COL)
+            self.scaler.setOutputCol(_OUTPUT_COL)
 
             if scaler == AvailableScaler.ZNorm:
                 # By default, spark's Standard scaler does not center the data (X-mean)
@@ -166,6 +171,15 @@ class Scaler(object):
 
         # CASE : Use spark = False: use lib `sklearn.preprocessing`
         else:
+
+            # Particular cases
+            # -----------------------------------------------------
+            # if MinMax Scaler, we want same behaviour than spark for case min = max
+            if self.scaler_name == AvailableScaler.MinMax and (np.max(X) == np.min(X)):
+                # Same result than spark: result = 0,5 * max
+                logging.info("Case min=max with MinMaxScaler ('no spark'): return `0.5 * max`")
+                return np.full(shape=X.shape, fill_value=0.5*np.max(X))
+
             return self.scaler.fit_transform(X)
 
 
@@ -285,9 +299,14 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
     for tsuid in ts_list:
 
         try:
+
             # 1/ Retrieve meta data
             # --------------------------------------------------------------------------
             md = meta_list[tsuid]
+
+            if 'ikats_start_date' not in md.keys() and 'ikats_end_date' not in md.keys():
+                raise ValueError("No MetaData associated with tsuid {}... Is it an existing TS ?".format(tsuid))
+
             period = int(float(md['qual_ref_period']))
             sd = int(md['ikats_start_date'])
             ed = int(md['ikats_end_date'])
@@ -308,27 +327,58 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # https://stackoverflow.com/questions/47705919/spark-get-the-actual-cluster-centeroids-with-standardscaler
 
             # OPERATION: Transform into `Vector` object (necessary for scaling with spark)
-            # INPUT: Spark DataFrame, with column ['Time', 'Value']
-            # OUTPUT: Spark Dataframe with columns ['Time', 'Value', _INPUT_COL]
-            # New col `_INPUT_COL` containing data to scale
+            # INPUT: Spark DataFrame, with column ['Index','Time', 'Value']
+            # OUTPUT: Spark Dataframe with columns ['Index','Time', 'Value', _INPUT_COL]
+            # New col `_INPUT_COL` containing data to scale (format vector)
             assembler = VectorAssembler(inputCols=["Value"], outputCol=_INPUT_COL)
+
+            # Example: | Index | Timestamp --| Value| features |
+            #          +-------+-------------+------+----------+
+            #          | 0     | 14879030000 | -1.0 | [-1.0]   |
+            # ...
 
             # Perform operation
             data = assembler.transform(df)
-            # TODO: END
 
             # OPERATION: Perform scaling on data frame
-            # INPUT: Spark Dataframe with columns ['Time', 'Value', _INPUT_COL]
-            # OUTPUT: Spark Dataframe with columns ['Time', 'Value', _INPUT_COL, _OUTPUT_COL]
+            # INPUT: Spark Dataframe with columns ['Index', 'Time', 'Value', _INPUT_COL]
+            # OUTPUT: Spark Dataframe with columns ['Index', 'Time', 'Value', _INPUT_COL, _OUTPUT_COL]
             # New col `_OUTPUT_COL` containing scaled data
-            scaledData = current_scaler.perform_scaling(data)
+            scaled_data = current_scaler.perform_scaling(data)
+            # Example:
+            # |Index|  Timestamp|Value|features|      scaledFeatures|
+            # +-----+-----------+-----+--------+--------------------+
+            # |    0|14879030000| -1.0|  [-1.0]|[-0.3651483716701...]|
+            # ...
+
+            # OPERATION: Reformat column "scaledFeatures" to obtain one float (instead of Vector of 1 element)
+            # INPUT: Spark Dataframe with columns ['Index', 'Time', 'Value', _INPUT_COL, _OUTPUT_COL]
+            # OUTPUT: Spark Dataframe with columns ['Index', 'Time', 'Value', _INPUT_COL, _OUTPUT_COL, 'result']
+            # Column "result" contains the result of scaling, with type float
+
+            # A function to transform Vector column into Float
+            vector_to_float = udf(lambda vector: float(vector[0]), DoubleType())
+            # Perform function
+            scaled_data = scaled_data.withColumn("result", vector_to_float(_OUTPUT_COL))
+            # Example:
+            # |Index|  Timestamp|Value|features|      scaledFeatures | result    |
+            # +-----+-----------+-----+--------+---------------------+-----------+
+            # |    0|14879030000| -1.0|  [-1.0]|[-0.3651483716701...]| -0.36... |
+            # ...
 
             # OPERATION: Reformat dataframe to obtain ['Time', 'Value'] with proper data
-            # INPUT: Spark Dataframe with columns ['Time', 'Value', _INPUT_COL, _OUTPUT_COL]
+            # INPUT: Spark Dataframe with columns ['Index','Time', 'Value', _INPUT_COL, _OUTPUT_COL, 'result']
             # OUTPUT: Spark DataFrame, with column ['Time', 'Value']
             # Column 'Value' contains scaled data
-            scaledData = scaledData.drop(['Value', _INPUT_COL]).\
-                withColumnRenamed(_OUTPUT_COL, 'Value')
+            scaled_data = scaled_data.drop('Value', 'Index', _INPUT_COL, _OUTPUT_COL).\
+                withColumnRenamed('result', 'Value')
+            # Example:
+            # |  Timestamp|               Value|
+            # +-----------+--------------------+
+            # |14879030000|-0.3651483716701... |
+            # ...
+
+            # TODO: END
 
             # 4/ Save result
             # ------------------------------------------------
@@ -342,8 +392,8 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # OPERATION: Import result by partition into database, and collect
             # INPUT: [Timestamp, rollmean]
             # OUTPUT: the new tsuid of the rollmean ts (not used)
-            scaledData.rdd.mapPartitions(lambda x: SparkUtils.save_data(fid=new_fid,
-                                                                        data=list(x))).collect()
+            scaled_data.rdd.mapPartitions(lambda x: SparkUtils.save_data(fid=new_fid,
+                                                                         data=list(x))).collect()
 
             # Retrieve tsuid of the saved TS
             new_tsuid = IkatsApi.fid.tsuid(new_fid)
