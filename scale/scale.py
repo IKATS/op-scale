@@ -197,7 +197,7 @@ class Scaler(object):
                 # sample length
                 N = X.shape[0]
                 logging.info("Case Z-norm ('no spark'):"
-                             " use `correct sample std` instead of (un-correct) `population std`")
+                             " use `correct sample std` instead of (classic) `population std`")
                 return self.scaler.fit_transform(X) * np.sqrt((N-1)/N)
 
             return self.scaler.fit_transform(X)
@@ -330,6 +330,7 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             if 'ikats_start_date' not in md.keys() and 'ikats_end_date' not in md.keys():
                 raise ValueError("No MetaData associated with tsuid {}... Is it an existing TS ?".format(tsuid))
 
+            # TODO: Re-build `get_ts_by_chunk_as_df`: if we don't have access to `period`.
             period = int(float(md['qual_ref_period']))
             sd = int(md['ikats_start_date'])
             ed = int(md['ikats_end_date'])
