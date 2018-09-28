@@ -51,7 +51,7 @@ def gen_ts(ts_id):
     :param ts_id: Identifier of the TS to generate (see content below for the structure)
     :type ts_id: int
 
-    :return: the TSUID and funcId
+    :return: the TSUID, funcId and all expectd result (one per scaling)
     :rtype: dict
     """
 
@@ -70,12 +70,15 @@ def gen_ts(ts_id):
 
         # Expected result
         # ----------------
-        # scaled with Z-Norm (X - mean / std)
-        ts_content_znorm = np.array([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]) / np.std([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.])
+        # scaled with Z-Norm (X - mean / correct_std)
+        ts_content_znorm = np.array(ts_content[:, 1]) / np.std(ts_content[:, 1], ddof=1)
+        # Correct_std = np.std(X, doof=1)
+        # Correct std = sqrt(1/(N-1) sum(x - mean)² )
+
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
-        ts_content_minmax = (np.array([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]) - -4) / (4 - -4)
+        ts_content_minmax = (np.array(ts_content[:, 1]) - -4) / (4 - -4)
         # scaled with MaxAbs scaler X / max( abs(X.max), abs(X.min)) )
-        ts_content_maxabs = np.array([-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]) / 4
+        ts_content_maxabs = np.array(ts_content[:, 1]) / 4
 
     elif ts_id == 2:
         # CASE: linear curve
@@ -86,8 +89,10 @@ def gen_ts(ts_id):
 
         # Expected result
         # ----------------
-        # scaled with Z-Norm (X - mean / std)
-        ts_content_znorm = (np.arange(9) - 4) / np.std(np.arange(9))
+        # scaled with Z-Norm (X - mean / correct_std)
+        ts_content_znorm = (np.arange(9) - 4) / np.std(np.arange(9), ddof=1)
+        # Correct_std = np.std(X, doof=1)
+        # Correct std = sqrt(1/(N-1) sum(x - mean)² )
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
         ts_content_minmax = np.arange(9) / 8.
         # scaled with MaxAbs scaler X / max( abs(X.max), abs(X.min)) )
@@ -102,7 +107,7 @@ def gen_ts(ts_id):
 
         # Expected result
         # ----------------
-        # scaled with Z-Norm (X - mean / std)
+        # scaled with Z-Norm (X - mean / correct_std)
         ts_content_znorm = np.array([0] * 9)
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min), 0.5 * max if min=max
         ts_content_minmax = np.array([0.5] * 9)
@@ -167,11 +172,10 @@ class TesScale(unittest.TestCase):
         msg = "Error in init `Scaler`, arg `copy` is {}, should be set to `False` "
         self.assertFalse(value.copy, msg=msg.format(value.copy))
 
-        # TODO: need to init a spark context to perform next commands
         # Test implementation Z-norm with spark
         # ----------------------------------------------
         # -> Arg `WithMean` should be set to `True`
-        msg="Error in init `Scaler` object (Z-Norm with spark), arg `WithMean` is {}, expected `True`"
+        msg = "Error in init `Scaler` object (Z-Norm with spark), arg `WithMean` is {}, expected `True`"
         result = Scaler(spark=True).scaler.getWithMean()
         self.assertTrue(result, msg=msg.format(result))
 
@@ -265,24 +269,24 @@ class TesScale(unittest.TestCase):
                     result_values = self.round_result(result_values)
 
                     # Standard Scaler on constant data, result = list of 0.
-                    msg = "Error in result of {} 'no spark' mode (case {}):" \
-                          " get {}, expected {}".format(scaler,
-                                                        case,
-                                                        result_values,
-                                                        expected)
+                    msg = "Error in result of {} 'no spark' mode (case {}):\n" \
+                          " get: {},\nexpected: {}, \ndiff: {}".format(scaler,
+                                                                       case,
+                                                                       result_values,
+                                                                       expected,
+                                                                       [result_values[i] - expected[i] for i in range(len(expected))])
 
                     self.assertEqual(result_values, expected, msg=msg)
 
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
 
-    # @unittest.skip("Spark functions not yet implemented")
     def test_spark(self):
         """
         Testing the result values of the scale algorithm, when spark is forced true.
         """
         # For each Available scaler
-        for scaler in [AvailableScaler.MaxAbs, AvailableScaler.MinMax]:#list(SCALER_DICT.keys()):
+        for scaler in list(SCALER_DICT.keys()):
             # For each use-case
             for case in list(USE_CASE.keys()):
                 # CASE 1:avg=0
@@ -319,7 +323,6 @@ class TesScale(unittest.TestCase):
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
 
-    # @unittest.skip("Solution not yet implemented")
     def test_diff_spark(self):
         """
         Testing difference of result between "Spark" and "No Spark"
@@ -364,19 +367,7 @@ class TesScale(unittest.TestCase):
                                                   [result_spark[i] - result_no_spark[i] for i
                                                    in range(len(result_spark))])
 
-                    # Example: "Error in compare Spark/no spark: case 1 (Null average).
-                    # Result Spark: [1,2,3]
-                    # Result no spark: [2,3,4]
-
-                    # Just for debug...
-                    if scaler == AvailableScaler.ZNorm:
-                        print("Diff: {}".format([result_spark[i] - result_no_spark[i] for i in range(len(result_spark))]))
-
                     self.assertEqual(result_spark, result_no_spark, msg=msg)
 
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
-
-
-
-
