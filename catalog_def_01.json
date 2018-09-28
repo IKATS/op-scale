@@ -1,0 +1,33 @@
+{  
+  "name":"scale",
+  "label":"Scale",
+  "description":"The implementation of the normalization of data with the scale function from ikats",
+  "family":"Preprocessing_TS__Transforming",
+  "entry_point":"scale.scale::scale_ts_list",
+  "inputs":[  
+    {  
+      "name":"ts_list",
+      "label":"TS list",
+      "description":"The list of TS to scale",
+      "type":"ts_list"
+    }
+  ],
+  "parameters":[  
+    {  
+      "name":"scaler",
+      "description":"The scaler to use: Z-Norm: (X - mean)/std, MinMax Scaler : (X - X.min) / (X.max - X.min), MaxAbs Scaler: X / max( abs(X.max), abs(X.min) )",
+      "type":"list",
+      "label":"Scaler",
+      "domain":"['Z-Norm', 'MinMax', 'MaxAbs']",
+      "default":"Z-Norm"
+    }
+  ],
+  "outputs":[  
+    {  
+      "name":"ts_list",
+      "label":"TS list",
+      "description":"The reference to the TS resulting from the scale operation: note that dict result is filled only with the key 'tsuid': the 'funcId' is undefined in current version.",
+      "type":"ts_list"
+    }
+  ]
+}

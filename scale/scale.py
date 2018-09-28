@@ -327,13 +327,20 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # --------------------------------------------------------------------------
             md = meta_list[tsuid]
 
-            if 'ikats_start_date' not in md.keys() and 'ikats_end_date' not in md.keys() and 'qual_ref_period' not in md.keys():
+            # Check available meta-data
+            if 'ikats_start_date' not in md.keys() and 'ikats_end_date' not in md.keys() and 'qual_nb_points' not in md.keys():
                 raise ValueError("No MetaData associated with tsuid {}... Is it an existing TS ?".format(tsuid))
-
-            # TODO: Re-build `get_ts_by_chunk_as_df`: if we don't have access to `period`.
-            period = int(float(md['qual_ref_period']))
-            sd = int(md['ikats_start_date'])
-            ed = int(md['ikats_end_date'])
+            # If `period` is not calculated: calculate it manually
+            elif 'qual_ref_period' not in md.keys():
+                sd = int(md['ikats_start_date'])
+                ed = int(md['ikats_end_date'])
+                nb_points = int(md['qual_nb_points'])
+                period = int((ed - sd)/(nb_points - 1))
+            # Else: metadata `period` available...
+            else:
+                period = int(float(md['qual_ref_period']))
+                sd = int(md['ikats_start_date'])
+                ed = int(md['ikats_end_date'])
 
             # 2/ Get data
             # --------------------------------------------------------------------------

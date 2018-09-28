@@ -119,8 +119,7 @@ def gen_ts(ts_id):
 
     # Create the timeseries
     result = IkatsApi.ts.create(fid=fid, data=np.array(ts_content))
-    # TODO: modify this, when pb with period is fix
-    IkatsApi.md.create(tsuid=result['tsuid'], name="qual_ref_period", value=1000, force_update=True)
+    # NO PERIOD
     IkatsApi.md.create(tsuid=result['tsuid'], name="qual_nb_points", value=len(ts_content), force_update=True)
     IkatsApi.md.create(tsuid=result['tsuid'], name="metric", value="metric_%s" % ts_id, force_update=True)
     IkatsApi.md.create(tsuid=result['tsuid'], name="funcId", value="fid_%s" % ts_id, force_update=True)
