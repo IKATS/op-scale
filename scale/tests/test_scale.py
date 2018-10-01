@@ -40,7 +40,8 @@ LOGGER.addHandler(STREAM_HANDLER)
 USE_CASE = {
     1: "Null average",
     2: "Linear curve",
-    3: "Constant value"
+    3: "Constant value",
+    4: "Portfolio"
 }
 
 
@@ -114,6 +115,27 @@ def gen_ts(ts_id):
         # scaled with MaxAbs scaler X / max( abs(X.max), abs(X.min)) )
         ts_content_maxabs = np.array([1.] * 9)  # same result than previous: min=0
 
+    elif ts_id == 4:
+        # CASE: Portfolio (just 2 TS)
+        tsuid_list = IkatsApi.ds.read("Portfolio")['ts_list'][:2]
+
+        # Fill result:
+        result = []
+        for tsuid in tsuid_list:
+            ts_content = IkatsApi.ts.read(tsuid)[0]
+            mean = np.mean(ts_content[:, 1])
+            std = np.std(ts_content[:, 1], ddof=1)
+            max = np.max(ts_content[:, 1])
+            min = np.min(ts_content[:, 1])
+            absMax = np.max(np.abs(ts_content[:, 1]))
+
+            result.append({"tsuid": tsuid,
+                           "funcId": IkatsApi.fid.read(tsuid),
+                           "ts_content": ts_content,
+                           "expected_" + AvailableScaler.ZNorm: (ts_content[:, 1] - mean)/std ,     # Store the 3 expected results (3 scalers)
+                           "expected_" + AvailableScaler.MinMax: (ts_content[:, 1] - min)/(max - min),
+                           "expected_" + AvailableScaler.MaxAbs: ts_content[:, 1] / absMax})
+        return result
     else:
         raise NotImplementedError
 
@@ -126,12 +148,12 @@ def gen_ts(ts_id):
     if not result['status']:
         raise SystemError("Error while creating TS %s" % ts_id)
 
-    return {"tsuid": result['tsuid'],
-            "funcId": fid,
-            "ts_content": ts_content,
-            "expected_" + AvailableScaler.ZNorm: ts_content_znorm,     # Store the 3 expected results (3 scalers)
-            "expected_" + AvailableScaler.MinMax: ts_content_minmax,
-            "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}
+    return [{"tsuid": result['tsuid'],
+             "funcId": fid,
+             "ts_content": ts_content,
+             "expected_" + AvailableScaler.ZNorm: ts_content_znorm,     # Store the 3 expected results (3 scalers)
+             "expected_" + AvailableScaler.MinMax: ts_content_minmax,
+             "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}]
 
 
 class TesScale(unittest.TestCase):
@@ -140,7 +162,7 @@ class TesScale(unittest.TestCase):
     """
 
     @staticmethod
-    def round_result(np_array, digits=6):
+    def round_result(np_array, digits=5):
         """
         Round numpy array elements, and transform result into list.
 
@@ -184,7 +206,7 @@ class TesScale(unittest.TestCase):
         Testing behaviour when wrong arguments on function `scale_ts_list`.
         """
         # Get the TSUID of the saved TS
-        tsuid = gen_ts(1)['tsuid']
+        tsuid_list = gen_ts(1)
 
         try:
 
@@ -200,45 +222,45 @@ class TesScale(unittest.TestCase):
             with self.assertRaises(ValueError, msg=msg):
                 scale_ts_list(ts_list=[])
 
-            # Un-existant TS
-            msg = "Testing arguments : Error in testing un-existant `ts_list`"
-            with self.assertRaises(ValueError, msg=msg):
-                scale_ts_list(ts_list=['TS which does not exist'])
+            # # Un-existant TS
+            # msg = "Testing arguments : Error in testing un-existant `ts_list`"
+            # with self.assertRaises(ValueError, msg=msg):
+            #     scale_ts_list(ts_list=[{'tsuid': 'TS which does not exist'}])
 
             # scaler
             # ----------------------------
             # wrong type (not str)
             msg = "Testing arguments : Error in testing `scale` type"
             with self.assertRaises(TypeError, msg=msg):
-                scale_ts_list(ts_list=[tsuid], scaler=1.0)
+                scale_ts_list(ts_list=tsuid_list, scaler=1.0)
 
             # wrong element (not in SCALER_DICT
             msg = "Testing arguments : Error in testing `scale` unexpected value"
             with self.assertRaises(ValueError, msg=msg):
-                scale_ts_list(ts_list=[tsuid], scaler="Scaler which does not exist")
+                scale_ts_list(ts_list=tsuid_list, scaler="Scaler which does not exist")
 
             # nb_points_by_chunk
             # ----------------------------
             # Wrong type (not int)
             msg = "Testing arguments : Error in testing `nb_point_by_chunk` type"
             with self.assertRaises(TypeError, msg=msg):
-                scale_ts_list(ts_list=[tsuid], nb_points_by_chunk="a")
+                scale_ts_list(ts_list=tsuid_list, nb_points_by_chunk="a")
 
             # Not > 0
             msg = "Testing arguments : Error in testing `nb_point_by_chunk` negative value"
             with self.assertRaises(TypeError, msg=msg):
-                scale_ts_list(ts_list=[tsuid], nb_points_by_chunk=-100)
+                scale_ts_list(ts_list=tsuid_list, nb_points_by_chunk=-100)
 
             # spark
             # ----------------------------
             # Wrong type (not NoneType or bool)
             msg = "Testing arguments : Error in testing `spark` type"
             with self.assertRaises(TypeError, msg=msg):
-                scale_ts_list(ts_list=[tsuid], spark="True")
+                scale_ts_list(ts_list=tsuid_list, spark="True")
 
         finally:
             # Clean up database
-            IkatsApi.ts.delete(tsuid, True)
+            IkatsApi.ts.delete(tsuid_list[0]['tsuid'], True)
 
     def test_scale_value(self):
         """
@@ -252,31 +274,40 @@ class TesScale(unittest.TestCase):
                 # CASE 1:avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
+                # CASE 4: Existing multi-TS (PORTFOLIO)
 
+                # result = list of dict {tsuid: , fid: , expected_Z-Norm: ...}
                 result = gen_ts(case)
-                tsuid = result['tsuid']
+                # Get the list of tsuid
+                tsuid = [x['tsuid'] for x in result]
                 # Expected result (rounded with k digits)
-                expected = self.round_result(result['expected_' + scaler])
+                expected = [self.round_result(x['expected_' + scaler]) for x in result]
                 try:
 
                     # Perform scaling, and get the resulting tsuid
-                    result_tsuid = scale_ts_list([tsuid], scaler=scaler, spark=False)[0]['tsuid']
+                    result_tsuid = [x['tsuid'] for x in scale_ts_list(result, scaler=scaler, spark=False)]
+                    # `result_tsuid`: list of str: ['tsuid1', 'tsuid2', ...]
 
-                    # Get results (column "Value" is [:, 1])
-                    result_values = IkatsApi.ts.read(result_tsuid)[0][:, 1]
+                    # List of TS [ [[time1, value1], [time2, value2],...] ]
+                    result_values = IkatsApi.ts.read(result_tsuid)
 
-                    # Round result (default k digits): else, raise error
-                    result_values = self.round_result(result_values)
+                    # For each ts result
+                    for ts in range(len(result_values)):
+                        # Get column "Value"  ([:, 1])
+                        result_values_ts = result_values[ts][:, 1]
 
-                    # Standard Scaler on constant data, result = list of 0.
-                    msg = "Error in result of {} 'no spark' mode (case {}):\n" \
-                          " get: {},\nexpected: {}, \ndiff: {}".format(scaler,
-                                                                       case,
-                                                                       result_values,
-                                                                       expected,
-                                                                       [result_values[i] - expected[i] for i in range(len(expected))])
+                        # Round result (default k digits): else, raise error
+                        result_values_ts = self.round_result(result_values_ts)
 
-                    self.assertEqual(result_values, expected, msg=msg)
+                        # Standard Scaler on constant data, result = list of 0.
+                        msg = "Error in result of {} 'no spark' mode (case {}):\n" \
+                              " get: {},\nexpected: {}, \ndiff: {}".format(scaler,
+                                                                           case,
+                                                                           result_values_ts,
+                                                                           expected[ts],
+                                                                           [result_values_ts[i] - expected[ts][i] for i in range(len(expected[ts]))])
+
+                        self.assertEqual(result_values_ts, expected[ts], msg=msg)
 
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
@@ -292,33 +323,42 @@ class TesScale(unittest.TestCase):
                 # CASE 1:avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
+                # CASE 4: Existing multi-TS (PORTFOLIO)
 
                 result = gen_ts(case)
-                tsuid = result['tsuid']
+                # Get the list of tsuid
+                tsuid = [x['tsuid'] for x in result]
                 # Expected result (rounded with k digits)
-                expected = self.round_result(result['expected_' + scaler])
+                expected = [self.round_result(x['expected_' + scaler]) for x in result]
 
                 try:
 
-                    # Force spark usage
-                    result_tsuid = scale_ts_list([tsuid], scaler=scaler, spark=True)[0]['tsuid']
+                    # Perform scaling, and get the resulting tsuid (force spark usage)
+                    result_tsuid = [x['tsuid'] for x in scale_ts_list(result,
+                                                                      scaler=scaler,
+                                                                      spark=True)]
+                    # `result_tsuid`: list of str: ['tsuid1', 'tsuid2', ...]
 
-                    # Get results (column "Value" is [:, 1])
-                    result_values = IkatsApi.ts.read(result_tsuid)[0][:, 1]
-                    # Round result (default k digits): else, raise error
-                    result_values = self.round_result(result_values)
+                    # List of TS [ [[time1, value1], [time2, value2],...] ]
+                    result_values = IkatsApi.ts.read(result_tsuid)
 
-                    # Standard Scaler on constant data, result = list of 0.
-                    msg = "Error in result of {} 'Spark' mode (case {}):\n" \
-                          " get {},\n expected {}\n" \
-                          "difference: {}".format(scaler,
-                                                  case,
-                                                  result_values,
-                                                  expected,
-                                                  [result_values[i] - expected[i] for i in range(len(expected))])
+                    # For each ts result
+                    for ts in range(len(result_values)):
+                        # Get column "Value"  ([:, 1])
+                        result_values_ts = result_values[ts][:, 1]
 
-                    # Standard Scaler on constant data, result = list of 0.
-                    self.assertEqual(result_values, expected, msg=msg)
+                        # Round result (default k digits): else, raise error
+                        result_values_ts = self.round_result(result_values_ts)
+
+                        # Standard Scaler on constant data, result = list of 0.
+                        msg = "Error in result of {} 'Spark' mode (case {}):\n" \
+                              " get: {},\nexpected: {}, \ndiff: {}".format(scaler,
+                                                                           case,
+                                                                           result_values_ts,
+                                                                           expected[ts],
+                                                                           [result_values_ts[i] - expected[ts][i] for i in range(len(expected[ts]))])
+
+                        self.assertEqual(result_values_ts, expected[ts], msg=msg)
 
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
@@ -335,39 +375,58 @@ class TesScale(unittest.TestCase):
                 # CASE 1:avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
+                # CASE 4: Existing multi-TS (PORTFOLIO)
 
-                tsuid = gen_ts(case)['tsuid']
-
+                result = gen_ts(case)
+                # Get the list of tsuid
+                tsuid = [x['tsuid'] for x in result]
                 try:
-                    # Result with spark FORCED
-                    # TODO: Perhaps here, modify here nb_pt_by_chunks (?)
-                    # Force spark usage
-                    result_tsuid_spark = scale_ts_list([tsuid], scaler=scaler, spark=True)[0]['tsuid']
+                    # GET SPARK RESULT
+                    # ------------------------
+                    # Perform scaling, and get the resulting tsuid (force spark usage)
+                    result_tsuid_spark = [x['tsuid'] for x in scale_ts_list(result,
+                                                                            scaler=scaler,
+                                                                            spark=True)]
+                    # `result_tsuid`: list of str: ['tsuid1', 'tsuid2', ...]
+                    # List of TS [ [[time1, value1], [time2, value2],...] ]
+                    result_values_spark = IkatsApi.ts.read(result_tsuid_spark)
 
-                    # Get results (column "Value" is [:, 1])
-                    result_spark = IkatsApi.ts.read(result_tsuid_spark)[0][:, 1]
-                    # Round result (default k digits): else, raise error
-                    result_spark = self.round_result(result_spark)
+                    # GET NO SPARK RESULT
+                    # ------------------------
+                    result_tsuid_nospark = [x['tsuid'] for x in scale_ts_list(result,
+                                                                              scaler=scaler,
+                                                                              spark=False)]
+                    result_values_nospark = IkatsApi.ts.read(result_tsuid_nospark)
 
-                    # Result with NO Spark Forced
-                    result_tsuid_no_spark = scale_ts_list([tsuid], scaler=scaler, spark=False)[0]['tsuid']
+                    # For each ts result
+                    for ts in range(len(result_values_spark)):
+                        # GET SPARK VALUES
+                        # ------------------------
+                        # Get column "Value"  ([:, 1])
+                        result_values_ts_spark = result_values_spark[ts][:, 1]
 
-                    # Get results (column "Value" is [:, 1])
-                    result_no_spark = IkatsApi.ts.read(result_tsuid_no_spark)[0][:, 1]
-                    # Round result (default k digits): else, raise error
-                    result_no_spark = self.round_result(result_no_spark)
+                        # Round result (default k digits): else, raise error
+                        result_values_ts_spark = self.round_result(result_values_ts_spark)
 
-                    msg = "Error in compare Spark/no spark: case {} ({}) \n" \
-                          "Result Spark: {} \n" \
-                          "Result no spark {}.\n" \
-                          "Difference: {}".format(case,
-                                                  USE_CASE[case],
-                                                  result_spark,
-                                                  result_no_spark,
-                                                  [result_spark[i] - result_no_spark[i] for i
-                                                   in range(len(result_spark))])
+                        # GET NO SPARK RESULT
+                        # ------------------------
+                        # Get column "Value"  ([:, 1])
+                        result_values_ts_nospark = result_values_nospark[ts][:, 1]
 
-                    self.assertEqual(result_spark, result_no_spark, msg=msg)
+                        # Round result (default k digits): else, raise error
+                        result_values_ts_nospark = self.round_result(result_values_ts_nospark)
+
+                        msg = "Error in compare Spark/no spark: case {} ({}) \n" \
+                              "Result Spark: {} \n" \
+                              "Result no spark {}.\n" \
+                              "Difference: {}".format(case,
+                                                      USE_CASE[case],
+                                                      result_values_ts_spark,
+                                                      result_values_ts_nospark,
+                                                      [result_values_ts_spark[i] - result_values_ts_nospark[i] for i
+                                                       in range(len(result_values_ts_nospark))])
+
+                        self.assertEqual(result_values_ts_spark, result_values_ts_nospark, msg=msg)
 
                 finally:
                     IkatsApi.ts.delete(tsuid, True)

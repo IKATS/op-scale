@@ -449,7 +449,9 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
     Wrapper: compute a scaling on a provided ts_list
 
     :param ts_list: List of TS to scale
-    :type ts_list: list of str
+    :type ts_list: List of dict
+
+    ..Example: [ {'tsuid': tsuid1, 'funcId' funcId1}, ...]
 
     :param scaler: The scaler used, should be one of the AvailableScaler...
     :type scaler: str
@@ -481,6 +483,12 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
     if len(ts_list) == 0:
         raise ValueError("`ts_list` provided is empty !")
 
+    try:
+        # Extract TSUID from ts_list
+        tsuid_list = [x['tsuid'] for x in ts_list]
+    except Exception:
+        raise ValueError("Impossible to get tsuid list...")
+
     # scaler (str in available scalers)
     if type(scaler) is not str:
         raise TypeError("Arg. type `scaler` is {}, expected `str`".format(type(scaler)))
@@ -502,9 +510,9 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
                                                                         nb_points_by_chunk=nb_points_by_chunk)):
         # Arg `spark=True`: spark usage forced
         # Arg `spark`=None`: Check using criteria (nb_points and number of ts)
-        return spark_scale(ts_list=ts_list, scaler=scaler, nb_points_by_chunk=nb_points_by_chunk)
+        return spark_scale(ts_list=tsuid_list, scaler=scaler, nb_points_by_chunk=nb_points_by_chunk)
     else:
-        return scale(ts_list=ts_list, scaler=scaler)
+        return scale(ts_list=tsuid_list, scaler=scaler)
 
 
 # TODO: put these two functions into module
