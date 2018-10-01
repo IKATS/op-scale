@@ -505,7 +505,7 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
 
     # 1/ Check for spark usage and run
     # ----------------------------------------------------------
-    if spark is True or (spark is None and SparkUtils.check_spark_usage(tsuid_list=ts_list,
+    if spark is True or (spark is None and SparkUtils.check_spark_usage(tsuid_list=tsuid_list,
                                                                         nb_ts_criteria=100,
                                                                         nb_points_by_chunk=nb_points_by_chunk)):
         # Arg `spark=True`: spark usage forced
