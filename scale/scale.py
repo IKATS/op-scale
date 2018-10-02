@@ -35,7 +35,7 @@ from ikats.core.data.ts import TimestampedMonoVal
 from ikats.core.library.exception import IkatsException, IkatsConflictError
 from pyspark.sql.types import DoubleType
 from pyspark.sql.functions import udf
-
+from ikats.core.resource.client.temporal_data_mgr import DTYPE
 """
 Scale Algorithm (also named "Normalize"):
 For now, scaler used are:
@@ -427,6 +427,34 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
 
             # Inherit from parent
             IkatsApi.ts.inherit(new_tsuid, tsuid)
+            
+            # store metadata ikats_start_date, ikats_end_date and qual_nb_points
+            if not IkatsApi.md.create(
+                    tsuid=new_tsuid,
+                    name='ikats_start_date',
+                    value=sd,
+                    data_type=DTYPE.date,
+                    force_update=True):
+                LOGGER.error("Metadata ikats_start_date couldn't be saved for TS %s", new_tsuid)
+
+            if not IkatsApi.md.create(
+                    tsuid=new_tsuid,
+                    name='ikats_end_date',
+                    value=ed,
+                    data_type=DTYPE.date,
+                    force_update=True):
+                LOGGER.error("Metadata ikats_end_date couldn't be saved for TS %s", new_tsuid)
+
+            # Retrieve imported number of points from database
+            qual_nb_points = IkatsApi.ts.nb_points(tsuid=new_tsuid)
+            if not IkatsApi.md.create(
+                    tsuid=new_tsuid,
+                    name='qual_nb_points',
+                    value=qual_nb_points,
+                    data_type=DTYPE.number,
+                    force_update=True):
+                LOGGER.error("Metadata qual_nb_points couldn't be saved for TS %s", new_tsuid)
+
 
         except Exception:
             raise
