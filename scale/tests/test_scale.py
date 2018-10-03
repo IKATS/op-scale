@@ -74,7 +74,7 @@ def gen_ts(ts_id):
         # scaled with Z-Norm (X - mean / correct_std)
         ts_content_znorm = np.array(ts_content[:, 1]) / np.std(ts_content[:, 1], ddof=1)
         # Correct_std = np.std(X, doof=1)
-        # Correct std = sqrt(1/(N-1) sum(x - mean)² )
+        # Correct std = sqrt(1/(N-1) * sum(x - mean)^2 )
 
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
         ts_content_minmax = (np.array(ts_content[:, 1]) - -4) / (4 - -4)
@@ -93,7 +93,7 @@ def gen_ts(ts_id):
         # scaled with Z-Norm (X - mean / correct_std)
         ts_content_znorm = (np.arange(9) - 4) / np.std(np.arange(9), ddof=1)
         # Correct_std = np.std(X, doof=1)
-        # Correct std = sqrt(1/(N-1) sum(x - mean)² )
+        # Correct std = sqrt(1/(N-1) * sum(x - mean)^2 )
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
         ts_content_minmax = np.arange(9) / 8.
         # scaled with MaxAbs scaler X / max( abs(X.max), abs(X.min)) )
@@ -117,6 +117,7 @@ def gen_ts(ts_id):
 
     elif ts_id == 4:
         # CASE: Portfolio (just 2 TS)
+        # Review#816: You shall not use Portfolio in unittest
         tsuid_list = IkatsApi.ds.read("Portfolio")['ts_list'][:2]
 
         # Fill result:
@@ -129,10 +130,11 @@ def gen_ts(ts_id):
             min = np.min(ts_content[:, 1])
             absMax = np.max(np.abs(ts_content[:, 1]))
 
+            # Store the 3 expected results (3 scalers)
             result.append({"tsuid": tsuid,
                            "funcId": IkatsApi.fid.read(tsuid),
                            "ts_content": ts_content,
-                           "expected_" + AvailableScaler.ZNorm: (ts_content[:, 1] - mean)/std ,     # Store the 3 expected results (3 scalers)
+                           "expected_" + AvailableScaler.ZNorm: (ts_content[:, 1] - mean)/std ,
                            "expected_" + AvailableScaler.MinMax: (ts_content[:, 1] - min)/(max - min),
                            "expected_" + AvailableScaler.MaxAbs: ts_content[:, 1] / absMax})
         return result
@@ -161,6 +163,13 @@ class TesScale(unittest.TestCase):
     Test the scale algorithm (results are rounded with 6 digits)
     """
 
+    # Review#816: consistency: 5 or 6 digits ?
+    # Review#816: You should use the following code instead of redefining your own (6x): 
+    # self.assertTrue(np.allclose(
+    #     np.array(expected_result, dtype=np.float64),
+    #     np.array(obtained_result, dtype=np.float64),
+    #     atol=1e-6))
+
     @staticmethod
     def round_result(np_array, digits=5):
         """
@@ -169,7 +178,7 @@ class TesScale(unittest.TestCase):
         :param np_array: The array to round
         :type np_array: np.array
 
-        :param digits: umber of digits used after rounding (here 6)
+        :param digits: Number of digits used after rounding (here 6)
         :type digits: int
 
         :return: List containing `np_array` input array, rounded.
@@ -222,8 +231,9 @@ class TesScale(unittest.TestCase):
             with self.assertRaises(ValueError, msg=msg):
                 scale_ts_list(ts_list=[])
 
-            # # Un-existant TS
-            # msg = "Testing arguments : Error in testing un-existant `ts_list`"
+            # Review#816: Commented test. delete or fix
+            # # non-existent TS
+            # msg = "Testing arguments : Error in testing non-existent `ts_list`"
             # with self.assertRaises(ValueError, msg=msg):
             #     scale_ts_list(ts_list=[{'tsuid': 'TS which does not exist'}])
 
@@ -234,7 +244,7 @@ class TesScale(unittest.TestCase):
             with self.assertRaises(TypeError, msg=msg):
                 scale_ts_list(ts_list=tsuid_list, scaler=1.0)
 
-            # wrong element (not in SCALER_DICT
+            # wrong element (not in SCALER_DICT)
             msg = "Testing arguments : Error in testing `scale` unexpected value"
             with self.assertRaises(ValueError, msg=msg):
                 scale_ts_list(ts_list=tsuid_list, scaler="Scaler which does not exist")
@@ -269,17 +279,19 @@ class TesScale(unittest.TestCase):
         # For each Available scaler
         for scaler in list(SCALER_DICT.keys()):
 
-            # For each use-case
+            # For each use case
             for case in list(USE_CASE.keys()):
-                # CASE 1:avg=0
+                # CASE 1: avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
+                # Review#816 You should not use Portfolio in unit tests but create your own TS (to delete after test completion)
                 # CASE 4: Existing multi-TS (PORTFOLIO)
 
                 # result = list of dict {tsuid: , fid: , expected_Z-Norm: ...}
                 result = gen_ts(case)
                 # Get the list of tsuid
                 tsuid = [x['tsuid'] for x in result]
+
                 # Expected result (rounded with k digits)
                 expected = [self.round_result(x['expected_' + scaler]) for x in result]
                 try:
@@ -301,11 +313,12 @@ class TesScale(unittest.TestCase):
 
                         # Standard Scaler on constant data, result = list of 0.
                         msg = "Error in result of {} 'no spark' mode (case {}):\n" \
-                              " get: {},\nexpected: {}, \ndiff: {}".format(scaler,
-                                                                           case,
-                                                                           result_values_ts,
-                                                                           expected[ts],
-                                                                           [result_values_ts[i] - expected[ts][i] for i in range(len(expected[ts]))])
+                              " get: {},\nexpected: {}, \ndiff: {}".format(
+                                  scaler,
+                                  case,
+                                  result_values_ts,
+                                  expected[ts],
+                                  [result_values_ts[i] - expected[ts][i] for i in range(len(expected[ts]))])
 
                         self.assertEqual(result_values_ts, expected[ts], msg=msg)
 
@@ -318,11 +331,12 @@ class TesScale(unittest.TestCase):
         """
         # For each Available scaler
         for scaler in list(SCALER_DICT.keys()):
-            # For each use-case
+            # For each use case
             for case in list(USE_CASE.keys()):
-                # CASE 1:avg=0
+                # CASE 1: avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
+                # Review#816 You should not use Portfolio in unit tests but create your own TS (to delete after test completion)
                 # CASE 4: Existing multi-TS (PORTFOLIO)
 
                 result = gen_ts(case)
@@ -370,11 +384,12 @@ class TesScale(unittest.TestCase):
         # For each Available scaler
         for scaler in list(SCALER_DICT.keys()):
 
-            # For each use-case
+            # For each use case
             for case in list(USE_CASE.keys()):
-                # CASE 1:avg=0
+                # CASE 1: avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
+                # Review#816 You should not use Portfolio in unit tests but create your own TS (to delete after test completion)
                 # CASE 4: Existing multi-TS (PORTFOLIO)
 
                 result = gen_ts(case)
@@ -384,18 +399,14 @@ class TesScale(unittest.TestCase):
                     # GET SPARK RESULT
                     # ------------------------
                     # Perform scaling, and get the resulting tsuid (force spark usage)
-                    result_tsuid_spark = [x['tsuid'] for x in scale_ts_list(result,
-                                                                            scaler=scaler,
-                                                                            spark=True)]
+                    result_tsuid_spark = [x['tsuid'] for x in scale_ts_list(result, scaler=scaler, spark=True)]
                     # `result_tsuid`: list of str: ['tsuid1', 'tsuid2', ...]
                     # List of TS [ [[time1, value1], [time2, value2],...] ]
                     result_values_spark = IkatsApi.ts.read(result_tsuid_spark)
 
                     # GET NO SPARK RESULT
                     # ------------------------
-                    result_tsuid_nospark = [x['tsuid'] for x in scale_ts_list(result,
-                                                                              scaler=scaler,
-                                                                              spark=False)]
+                    result_tsuid_nospark = [x['tsuid'] for x in scale_ts_list(result, scaler=scaler, spark=False)]
                     result_values_nospark = IkatsApi.ts.read(result_tsuid_nospark)
 
                     # For each ts result

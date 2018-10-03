@@ -40,7 +40,7 @@ from ikats.core.resource.client.temporal_data_mgr import DTYPE
 Scale Algorithm (also named "Normalize"):
 For now, scaler used are:
 - Standard Scaler (also called Z-Norm): (X - mean) / correct_std,
-Where correct std = sqrt(1/(N**-1**) sum(X-mean)²) = np.std(X) * sqrt(N-1 / N): best (un-biased) estimation of true std
+Where correct std = sqrt(1/(N**-1**) * sum(X-mean)^2) = np.std(X) * sqrt(N-1 / N): best (un-biased) estimation of true std
 - MinMax Scaler : (X - X.min) / (X.max - X.min), 0.5 * max if min=max
 - MaxAbs Scaler: X / max( abs(X.max), abs(X.min) )
 
@@ -49,7 +49,7 @@ If you want to add a scaler, please just update classes `AvailableScaler` and `S
 All limit cases are aligned on Spark behaviour.
 """
 
-# Define a logger for this algorithm
+# Define a logger for this operator
 LOGGER = logging.getLogger(__name__)
 
 
@@ -58,7 +58,7 @@ class AvailableScaler(enumerate):
     Class containing list of (unique) scaler names to propose to user.
     """
     # Standard scaler: (X - mean) / correct_std
-    # Where correct std = sqrt(1/(N**-1**) sum(X-mean)²) = np.std(X) * sqrt(N-1 / N)
+    # Where correct std = sqrt(1/(N**-1**) * sum(X-mean)^2) = np.std(X) * sqrt(N-1 / N)
     # Best (un-biased) estimation of true std
     ZNorm = "Z-Norm"
     # Min Max scaler: (X - min) / (max - min)
@@ -95,7 +95,7 @@ _OUTPUT_COL = "scaledFeatures"
 
 class Scaler(object):
     """
-    Wraper of sklearn / pyspark.ml scalers.
+    Wrapper of sklearn / pyspark.ml scalers.
     For init `SCALER_DICT` content, and perform scaling.
     """
 
@@ -120,8 +120,6 @@ class Scaler(object):
 
         :param scaler: The name of the scaler used. Default: Z-Norm
         :type scaler: str
-
-        :return: None
         """
         # Store name of the scaler used (str)
         self.scaler_name = scaler
@@ -183,14 +181,13 @@ class Scaler(object):
             # -----------------------------------------------------
             # if MinMax Scaler, we want same behaviour than spark for case min = max
             if self.scaler_name == AvailableScaler.MinMax and (np.max(X) == np.min(X)):
-                # Same result than spark: result = 0,5 * max
+                # Same result than spark: result = max / 2
                 logging.info("Case min=max with MinMaxScaler ('no spark'): return `0.5 * max`")
                 return np.full(shape=X.shape, fill_value=0.5*np.max(X))
 
             # If case StandardScaler in sklearn mode (no spark)
             if self.scaler_name == AvailableScaler.ZNorm:
-                # Multiply scaled data by a coefficient. Transform `population std` into (correct)
-                # `sample std`.
+                # Multiply scaled data by a coefficient. Transform `population std` into (correct) `sample std`.
                 # Result = (X - mean) / correct_std instead of (X-mean) / std
                 # Where correct_std = np.sqrt(N/(N-1)) * std (an un-biased estimation of the TRUE std)
 
@@ -211,7 +208,7 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
     :type ts_list: list of str
 
     :param scaler: The scaler used, should be one of the AvailableScaler...
-    :type scaler: str
+    :type scaler: AvailableScaler or str
 
     :return: A list of dict composed by original TSUID and the information about the new TS
     :rtype: list
@@ -247,7 +244,7 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
         start_computing_time = time.time()
 
         # ts_data is np.array [Time, Value]: apply scaler on col `Value` ([:, 1])
-        # Need to reshape this col into a (1, n_row) dataset (sklearn request)
+        # Need to reshape this col into a (1, n_row) dataset (sklearn format)
         scaled_data = current_scaler.perform_scaling(X=ts_data[:, 1].reshape(-1, 1))
 
         LOGGER.debug("TSUID: %s, Computing time: %.3f seconds", tsuid, time.time() - start_computing_time)
@@ -359,7 +356,7 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # New col `_INPUT_COL` containing data to scale (format vector)
             assembler = VectorAssembler(inputCols=["Value"], outputCol=_INPUT_COL)
 
-            # Example: | Index | Timestamp --| Value| features |
+            # Example: | Index | Timestamp   | Value| features |
             #          +-------+-------------+------+----------+
             #          | 0     | 14879030000 | -1.0 | [-1.0]   |
             # ...
@@ -414,11 +411,11 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # Generate the new functional identifier (fid) for the current TS (ts_uid)
             new_fid = gen_fid(tsuid=tsuid, short_name=short_name)
 
+            # Review#816: copy/paste mistake "rollmean" (2x)
             # OPERATION: Import result by partition into database, and collect
             # INPUT: [Timestamp, rollmean]
             # OUTPUT: the new tsuid of the rollmean ts (not used)
-            scaled_data.rdd.mapPartitions(lambda x: SparkUtils.save_data(fid=new_fid,
-                                                                         data=list(x))).collect()
+            scaled_data.rdd.mapPartitions(lambda x: SparkUtils.save_data(fid=new_fid, data=list(x))).collect()
 
             # Retrieve tsuid of the saved TS
             new_tsuid = IkatsApi.fid.tsuid(new_fid)
@@ -482,7 +479,7 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
     ..Example: [ {'tsuid': tsuid1, 'funcId' funcId1}, ...]
 
     :param scaler: The scaler used, should be one of the AvailableScaler...
-    :type scaler: str
+    :type scaler: AvailableScaler or str
 
     :param nb_points_by_chunk: size of chunks in number of points
     (assuming time series is periodic and without holes)
@@ -492,7 +489,6 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
         * forced (case True),
         * forced to be not used (case False)
         * case None: Spark usage is checked (function of amount of data)
-    For TU only ! default None
     :type spark: bool or NoneType
 
     :return: A list of dict composed by original TSUID and the information about the new TS
@@ -508,7 +504,7 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
     # ts_list (non empty list)
     if type(ts_list) is not list:
         raise TypeError("Arg. type `ts_list` is {}, expected `list`".format(type(ts_list)))
-    if len(ts_list) == 0:
+    elif len(ts_list) == 0:
         raise ValueError("`ts_list` provided is empty !")
 
     try:
@@ -537,12 +533,13 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
                                                                         nb_ts_criteria=100,
                                                                         nb_points_by_chunk=nb_points_by_chunk)):
         # Arg `spark=True`: spark usage forced
-        # Arg `spark`=None`: Check using criteria (nb_points and number of ts)
+        # Arg `spark=None`: Check using criteria (nb_points and number of ts)
         return spark_scale(ts_list=tsuid_list, scaler=scaler, nb_points_by_chunk=nb_points_by_chunk)
     else:
         return scale(ts_list=tsuid_list, scaler=scaler)
 
 
+# Review#816: TODO to handle
 # TODO: put these two functions into module
 def save(tsuid, ts_result, short_name="scaled", sparkified=False):
     """
@@ -565,6 +562,7 @@ def save(tsuid, ts_result, short_name="scaled", sparkified=False):
     :return: the created TSUID and its associated FID
     :rtype: str, str
 
+    # Review#816: 2 raises: TypeError and IkatsException but no IOError
     :raise IOError: if an issue occurs during the import
     """
     if type(ts_result) is not TimestampedMonoVal:
@@ -583,7 +581,7 @@ def save(tsuid, ts_result, short_name="scaled", sparkified=False):
         return res_import['tsuid'], new_fid
 
     except Exception:
-        raise IkatsException("save_rollmean() failed")
+        raise IkatsException("save scale failed")
 
 
 def gen_fid(tsuid, short_name="scaled"):
