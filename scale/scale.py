@@ -29,7 +29,7 @@ import pyspark.ml.feature
 from ikats.core.library.spark import SSessionManager, SparkUtils
 from pyspark.ml.feature import VectorAssembler
 
-# Ikats utils
+# IKATS utils
 from ikats.core.resource.api import IkatsApi
 from ikats.core.data.ts import TimestampedMonoVal
 from ikats.core.library.exception import IkatsException, IkatsConflictError
@@ -40,7 +40,7 @@ from ikats.core.resource.client.temporal_data_mgr import DTYPE
 Scale Algorithm (also named "Normalize"):
 For now, scaler used are:
 - Standard Scaler (also called Z-Norm): (X - mean) / correct_std,
-Where correct std = sqrt(1/(N**-1**) * sum(X-mean)^2) = np.std(X) * sqrt(N-1 / N): best (un-biased) estimation of true std
+Where correct std = sqrt(1/(N**-1**) * sum(X-mean)^2) = np.std(X) * sqrt(N-1/N): best (unbiased) estimation of true std
 - MinMax Scaler : (X - X.min) / (X.max - X.min), 0.5 * max if min=max
 - MaxAbs Scaler: X / max( abs(X.max), abs(X.min) )
 
@@ -59,7 +59,7 @@ class AvailableScaler(enumerate):
     """
     # Standard scaler: (X - mean) / correct_std
     # Where correct std = sqrt(1/(N**-1**) * sum(X-mean)^2) = np.std(X) * sqrt(N-1 / N)
-    # Best (un-biased) estimation of true std
+    # Best (unbiased) estimation of true std
     ZNorm = "Z-Norm"
     # Min Max scaler: (X - min) / (max - min)
     MinMax = "MinMax"
@@ -67,7 +67,7 @@ class AvailableScaler(enumerate):
     MaxAbs = "MaxAbs"
 
 
-# Dict containing list of scaler used in algo.
+# Dict containing list of scaler used in operator.
 # Structure of the result: dict
 # {'no_spark': sklearn.preprocessing scaler,
 # 'spark': pyspark.ml.feature scaler}
@@ -154,24 +154,24 @@ class Scaler(object):
             # Perform an inplace scaling (for performance)
             self.scaler.copy = False
 
-    def perform_scaling(self, X):
+    def perform_scaling(self, x):
         """
         Perform scaler. This function replace:
             - the sklearn's `fit_transform()`
             - the pyspark's `fit().transform()`
 
-        :param X: The data to scale,
+        :param x: The data to scale,
             * shape = (N, 1) if np.array
             * df containing at least column [_INPUT_COL] containing`vector` type if spark DataFrame
-        :type X: np.array or pyspark.sql.DataFrame
+        :type x: np.array or pyspark.sql.DataFrame
 
-        :return: Object X scaled with `self.scaler`
-        :rtype: type(X)
+        :return: Object x scaled with `self.scaler`
+        :rtype: type(x)
         """
         # CASE : Use spark = True: use lib `pyspark.ml.feature`
         # --------------------------------------------------------
         if self.spark:
-            return self.scaler.fit(X).transform(X)
+            return self.scaler.fit(x).transform(x)
 
         # CASE : Use spark = False: use lib `sklearn.preprocessing`
         # --------------------------------------------------------
@@ -180,24 +180,24 @@ class Scaler(object):
             # Particular cases (align behaviour on Spark results)
             # -----------------------------------------------------
             # if MinMax Scaler, we want same behaviour than spark for case min = max
-            if self.scaler_name == AvailableScaler.MinMax and (np.max(X) == np.min(X)):
+            if self.scaler_name == AvailableScaler.MinMax and (np.max(x) == np.min(x)):
                 # Same result than spark: result = max / 2
                 logging.info("Case min=max with MinMaxScaler ('no spark'): return `0.5 * max`")
-                return np.full(shape=X.shape, fill_value=0.5*np.max(X))
+                return np.full(shape=x.shape, fill_value=0.5 * np.max(x))
 
             # If case StandardScaler in sklearn mode (no spark)
             if self.scaler_name == AvailableScaler.ZNorm:
                 # Multiply scaled data by a coefficient. Transform `population std` into (correct) `sample std`.
-                # Result = (X - mean) / correct_std instead of (X-mean) / std
-                # Where correct_std = np.sqrt(N/(N-1)) * std (an un-biased estimation of the TRUE std)
+                # Result = (x - mean) / correct_std instead of (x-mean) / std
+                # Where correct_std = np.sqrt(N/(N-1)) * std (an unbiased estimation of the TRUE std)
 
                 # sample length
-                N = X.shape[0]
+                n = x.shape[0]
                 logging.info("Case Z-norm ('no spark'):"
                              " use `correct sample std` instead of (classic) `population std`")
-                return self.scaler.fit_transform(X) * np.sqrt((N-1)/N)
+                return self.scaler.fit_transform(x) * np.sqrt((n - 1) / n)
 
-            return self.scaler.fit_transform(X)
+            return self.scaler.fit_transform(x)
 
 
 def scale(ts_list, scaler=AvailableScaler.ZNorm):
@@ -235,6 +235,7 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
 
         # Read TS from it's ID
         ts_data = IkatsApi.ts.read([tsuid])[0]
+        # Review#498 Delete or fix comment below
         # ts_data is np.array, shape = (2, nrow)
 
         LOGGER.debug("TSUID: %s, Gathering time: %.3f seconds", tsuid, time.time() - start_loading_time)
@@ -245,7 +246,7 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
 
         # ts_data is np.array [Time, Value]: apply scaler on col `Value` ([:, 1])
         # Need to reshape this col into a (1, n_row) dataset (sklearn format)
-        scaled_data = current_scaler.perform_scaling(X=ts_data[:, 1].reshape(-1, 1))
+        scaled_data = current_scaler.perform_scaling(x=ts_data[:, 1].reshape(-1, 1))
 
         LOGGER.debug("TSUID: %s, Computing time: %.3f seconds", tsuid, time.time() - start_computing_time)
 
@@ -325,7 +326,9 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             md = meta_list[tsuid]
 
             # Check available meta-data
-            if 'ikats_start_date' not in md.keys() and 'ikats_end_date' not in md.keys() and 'qual_nb_points' not in md.keys():
+            if 'ikats_start_date' not in md.keys() and \
+                    'ikats_end_date' not in md.keys() and \
+                    'qual_nb_points' not in md.keys():
                 raise ValueError("No MetaData associated with tsuid {}... Is it an existing TS ?".format(tsuid))
             # If `period` is not calculated: calculate it manually
             elif 'qual_ref_period' not in md.keys():
@@ -451,7 +454,6 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
                     data_type=DTYPE.number,
                     force_update=True):
                 LOGGER.error("Metadata qual_nb_points couldn't be saved for TS %s", new_tsuid)
-
 
         except Exception:
             raise

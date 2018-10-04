@@ -52,7 +52,7 @@ def gen_ts(ts_id):
     :param ts_id: Identifier of the TS to generate (see content below for the structure)
     :type ts_id: int
 
-    :return: the TSUID, funcId and all expectd result (one per scaling)
+    :return: the TSUID, funcId and all expected result (one per scaling)
     :rtype: dict
     """
 
@@ -73,7 +73,8 @@ def gen_ts(ts_id):
         # ----------------
         # scaled with Z-Norm (X - mean / correct_std)
         ts_content_znorm = np.array(ts_content[:, 1]) / np.std(ts_content[:, 1], ddof=1)
-        # Correct_std = np.std(X, doof=1)
+        # Review#498: Del or fix comment
+        # Correct_std = np.std(X, ddof=1)
         # Correct std = sqrt(1/(N-1) * sum(x - mean)^2 )
 
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
@@ -92,7 +93,8 @@ def gen_ts(ts_id):
         # ----------------
         # scaled with Z-Norm (X - mean / correct_std)
         ts_content_znorm = (np.arange(9) - 4) / np.std(np.arange(9), ddof=1)
-        # Correct_std = np.std(X, doof=1)
+        # Review#498: Del or fix comment
+        # Correct_std = np.std(X, ddof=1)
         # Correct std = sqrt(1/(N-1) * sum(x - mean)^2 )
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
         ts_content_minmax = np.arange(9) / 8.
@@ -126,22 +128,22 @@ def gen_ts(ts_id):
             ts_content = IkatsApi.ts.read(tsuid)[0]
             mean = np.mean(ts_content[:, 1])
             std = np.std(ts_content[:, 1], ddof=1)
-            max = np.max(ts_content[:, 1])
-            min = np.min(ts_content[:, 1])
-            absMax = np.max(np.abs(ts_content[:, 1]))
+            max_val = np.max(ts_content[:, 1])
+            min_val = np.min(ts_content[:, 1])
+            abs_max = np.max(np.abs(ts_content[:, 1]))
 
             # Store the 3 expected results (3 scalers)
             result.append({"tsuid": tsuid,
                            "funcId": IkatsApi.fid.read(tsuid),
                            "ts_content": ts_content,
-                           "expected_" + AvailableScaler.ZNorm: (ts_content[:, 1] - mean)/std ,
-                           "expected_" + AvailableScaler.MinMax: (ts_content[:, 1] - min)/(max - min),
-                           "expected_" + AvailableScaler.MaxAbs: ts_content[:, 1] / absMax})
+                           "expected_" + AvailableScaler.ZNorm: (ts_content[:, 1] - mean)/std,
+                           "expected_" + AvailableScaler.MinMax: (ts_content[:, 1] - min_val)/(max_val - min_val),
+                           "expected_" + AvailableScaler.MaxAbs: ts_content[:, 1] / abs_max})
         return result
     else:
         raise NotImplementedError
 
-    # Create the timeseries
+    # Create the time series
     result = IkatsApi.ts.create(fid=fid, data=np.array(ts_content))
     # NO PERIOD
     IkatsApi.md.create(tsuid=result['tsuid'], name="qual_nb_points", value=len(ts_content), force_update=True)
@@ -195,7 +197,7 @@ class TesScale(unittest.TestCase):
         # -> Should be object sklearn.preprocessing.StandardScaler
         value = Scaler().scaler
         expected_type = sklearn.preprocessing.StandardScaler
-        msg="Error in init `Scaler` object, get type {}, expected type {}"
+        msg = "Error in init `Scaler` object, get type {}, expected type {}"
 
         self.assertEqual(type(value), expected_type, msg=msg.format(type(value), expected_type))
 
@@ -406,8 +408,8 @@ class TesScale(unittest.TestCase):
 
                     # GET NO SPARK RESULT
                     # ------------------------
-                    result_tsuid_nospark = [x['tsuid'] for x in scale_ts_list(result, scaler=scaler, spark=False)]
-                    result_values_nospark = IkatsApi.ts.read(result_tsuid_nospark)
+                    result_tsuid_no_spark = [x['tsuid'] for x in scale_ts_list(result, scaler=scaler, spark=False)]
+                    result_values_no_spark = IkatsApi.ts.read(result_tsuid_no_spark)
 
                     # For each ts result
                     for ts in range(len(result_values_spark)):
@@ -422,10 +424,10 @@ class TesScale(unittest.TestCase):
                         # GET NO SPARK RESULT
                         # ------------------------
                         # Get column "Value"  ([:, 1])
-                        result_values_ts_nospark = result_values_nospark[ts][:, 1]
+                        result_values_ts_no_spark = result_values_no_spark[ts][:, 1]
 
                         # Round result (default k digits): else, raise error
-                        result_values_ts_nospark = self.round_result(result_values_ts_nospark)
+                        result_values_ts_no_spark = self.round_result(result_values_ts_no_spark)
 
                         msg = "Error in compare Spark/no spark: case {} ({}) \n" \
                               "Result Spark: {} \n" \
@@ -433,11 +435,11 @@ class TesScale(unittest.TestCase):
                               "Difference: {}".format(case,
                                                       USE_CASE[case],
                                                       result_values_ts_spark,
-                                                      result_values_ts_nospark,
-                                                      [result_values_ts_spark[i] - result_values_ts_nospark[i] for i
-                                                       in range(len(result_values_ts_nospark))])
+                                                      result_values_ts_no_spark,
+                                                      [result_values_ts_spark[i] - result_values_ts_no_spark[i] for i
+                                                       in range(len(result_values_ts_no_spark))])
 
-                        self.assertEqual(result_values_ts_spark, result_values_ts_nospark, msg=msg)
+                        self.assertEqual(result_values_ts_spark, result_values_ts_no_spark, msg=msg)
 
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
