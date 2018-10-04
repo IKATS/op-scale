@@ -17,25 +17,24 @@ limitations under the License.
 
 import logging
 import time
+
 import numpy as np
-
-# All scalers used in case SPARK=False
-import sklearn.preprocessing
-
 # All scalers used in case SPARK=True
 import pyspark.ml.feature
-
-# Spark utils
-from ikats.core.library.spark import SSessionManager, SparkUtils
+# All scalers used in case SPARK=False
+import sklearn.preprocessing
 from pyspark.ml.feature import VectorAssembler
+from pyspark.sql.functions import udf
+from pyspark.sql.types import DoubleType
 
 # IKATS utils
-from ikats.core.resource.api import IkatsApi
 from ikats.core.data.ts import TimestampedMonoVal
 from ikats.core.library.exception import IkatsException, IkatsConflictError
-from pyspark.sql.types import DoubleType
-from pyspark.sql.functions import udf
+# Spark utils
+from ikats.core.library.spark import SSessionManager, SparkUtils
+from ikats.core.resource.api import IkatsApi
 from ikats.core.resource.client.temporal_data_mgr import DTYPE
+
 """
 Scale Algorithm (also named "Normalize"):
 For now, scaler used are:
@@ -228,7 +227,6 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
 
     # Perform operation iteratively on each TS
     for tsuid in ts_list:
-
         # 1/ Load TS content
         # ------------------------------------------------
         start_loading_time = time.time()
@@ -335,7 +333,7 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
                 sd = int(md['ikats_start_date'])
                 ed = int(md['ikats_end_date'])
                 nb_points = int(md['qual_nb_points'])
-                period = int((ed - sd)/(nb_points - 1))
+                period = int((ed - sd) / (nb_points - 1))
             # Else: metadata `period` available...
             else:
                 period = int(float(md['qual_ref_period']))
@@ -345,7 +343,7 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # 2/ Get data
             # --------------------------------------------------------------------------
             # Import data into dataframe (["Index", "Timestamp", "Value"])
-            df, size = SSessionManager.get_ts_by_chunks_as_df(tsuid=tsuid,
+            df, _ = SSessionManager.get_ts_by_chunks_as_df(tsuid=tsuid,
                                                               sd=sd,
                                                               ed=ed,
                                                               period=period,
@@ -397,7 +395,7 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # INPUT: Spark Dataframe with columns ['Index','Time', 'Value', _INPUT_COL, _OUTPUT_COL, 'result']
             # OUTPUT: Spark DataFrame, with column ['Time', 'Value']
             # Column 'Value' contains scaled data as double.
-            scaled_data = scaled_data.drop('Value', 'Index', _INPUT_COL, _OUTPUT_COL).\
+            scaled_data = scaled_data.drop('Value', 'Index', _INPUT_COL, _OUTPUT_COL). \
                 withColumnRenamed('result', 'Value')
             # Example:
             # |  Timestamp|               Value|
@@ -427,7 +425,7 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
 
             # Inherit from parent
             IkatsApi.ts.inherit(new_tsuid, tsuid)
-            
+
             # store metadata ikats_start_date, ikats_end_date and qual_nb_points
             if not IkatsApi.md.create(
                     tsuid=new_tsuid,
@@ -506,7 +504,7 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
     # ts_list (non empty list)
     if type(ts_list) is not list:
         raise TypeError("Arg. type `ts_list` is {}, expected `list`".format(type(ts_list)))
-    elif len(ts_list) == 0:
+    elif not ts_list:
         raise ValueError("`ts_list` provided is empty !")
 
     try:
@@ -614,5 +612,3 @@ def gen_fid(tsuid, short_name="scaled"):
         IkatsApi.ts.create_ref(new_fid)
 
     return new_fid
-
-

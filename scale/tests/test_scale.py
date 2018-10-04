@@ -18,11 +18,11 @@ limitations under the License.
 import logging
 import unittest
 import numpy as np
+import sklearn.preprocessing
 
 from ikats.algo.scale.scale import AvailableScaler, Scaler, scale_ts_list, SCALER_DICT
 from ikats.core.resource.api import IkatsApi
 
-import sklearn.preprocessing
 
 # Set LOGGER
 LOGGER = logging.getLogger()
@@ -65,7 +65,7 @@ def gen_ts(ts_id):
         # CASE: avg=0
         # ----------------
         ts_content = np.array([list(range(14879030000, 14879039000, 1000)),
-                               [-1., -2.,  1.,  2.,  0.,  3., -3.,  4., -4.]],
+                               [-1., -2., 1., 2., 0., 3., -3., 4., -4.]],
                               np.float64).T
         # Average: 0, Standard deviation: 2.58198890
 
@@ -104,7 +104,7 @@ def gen_ts(ts_id):
     elif ts_id == 3:
         # CASE: Constant value
         ts_content = np.array([list(range(14879030000, 14879039000, 1000)),
-                               [1.]*9],
+                               [1.] * 9],
                               np.float64).T
         # Average = 0., Standard deviation = 0.
 
@@ -136,8 +136,8 @@ def gen_ts(ts_id):
             result.append({"tsuid": tsuid,
                            "funcId": IkatsApi.fid.read(tsuid),
                            "ts_content": ts_content,
-                           "expected_" + AvailableScaler.ZNorm: (ts_content[:, 1] - mean)/std,
-                           "expected_" + AvailableScaler.MinMax: (ts_content[:, 1] - min_val)/(max_val - min_val),
+                           "expected_" + AvailableScaler.ZNorm: (ts_content[:, 1] - mean) / std,
+                           "expected_" + AvailableScaler.MinMax: (ts_content[:, 1] - min_val) / (max_val - min_val),
                            "expected_" + AvailableScaler.MaxAbs: ts_content[:, 1] / abs_max})
         return result
     else:
@@ -155,10 +155,11 @@ def gen_ts(ts_id):
     return [{"tsuid": result['tsuid'],
              "funcId": fid,
              "ts_content": ts_content,
-             "expected_" + AvailableScaler.ZNorm: ts_content_znorm,     # Store the 3 expected results (3 scalers)
+             "expected_" + AvailableScaler.ZNorm: ts_content_znorm,  # Store the 3 expected results (3 scalers)
              "expected_" + AvailableScaler.MinMax: ts_content_minmax,
              "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}]
 
+# Review#816: You shall remove TS you create in database for any case you test
 
 class TesScale(unittest.TestCase):
     """
@@ -166,7 +167,7 @@ class TesScale(unittest.TestCase):
     """
 
     # Review#816: consistency: 5 or 6 digits ?
-    # Review#816: You should use the following code instead of redefining your own (6x): 
+    # Review#816: You should use the following code instead of redefining your own (6x):
     # self.assertTrue(np.allclose(
     #     np.array(expected_result, dtype=np.float64),
     #     np.array(obtained_result, dtype=np.float64),
@@ -188,7 +189,7 @@ class TesScale(unittest.TestCase):
         """
         return [round(i, digits) for i in np_array]
 
-    def test_Scaler(self):
+    def test_scaler(self):
         """
         Testing class `Scaler`
         """
@@ -244,6 +245,7 @@ class TesScale(unittest.TestCase):
             # wrong type (not str)
             msg = "Testing arguments : Error in testing `scale` type"
             with self.assertRaises(TypeError, msg=msg):
+                # noinspection PyTypeChecker
                 scale_ts_list(ts_list=tsuid_list, scaler=1.0)
 
             # wrong element (not in SCALER_DICT)
@@ -256,6 +258,7 @@ class TesScale(unittest.TestCase):
             # Wrong type (not int)
             msg = "Testing arguments : Error in testing `nb_point_by_chunk` type"
             with self.assertRaises(TypeError, msg=msg):
+                # noinspection PyTypeChecker
                 scale_ts_list(ts_list=tsuid_list, nb_points_by_chunk="a")
 
             # Not > 0
@@ -315,12 +318,12 @@ class TesScale(unittest.TestCase):
 
                         # Standard Scaler on constant data, result = list of 0.
                         msg = "Error in result of {} 'no spark' mode (case {}):\n" \
-                              " get: {},\nexpected: {}, \ndiff: {}".format(
-                                  scaler,
-                                  case,
-                                  result_values_ts,
-                                  expected[ts],
-                                  [result_values_ts[i] - expected[ts][i] for i in range(len(expected[ts]))])
+                              " get: {},\nexpected: {}, \ndiff: {}" \
+                            .format(scaler,
+                                    case,
+                                    result_values_ts,
+                                    expected[ts],
+                                    [result_values_ts[i] - expected[ts][i] for i in range(len(expected[ts]))])
 
                         self.assertEqual(result_values_ts, expected[ts], msg=msg)
 
@@ -372,7 +375,8 @@ class TesScale(unittest.TestCase):
                                                                            case,
                                                                            result_values_ts,
                                                                            expected[ts],
-                                                                           [result_values_ts[i] - expected[ts][i] for i in range(len(expected[ts]))])
+                                                                           [result_values_ts[i] - expected[ts][i] for i
+                                                                            in range(len(expected[ts]))])
 
                         self.assertEqual(result_values_ts, expected[ts], msg=msg)
 
