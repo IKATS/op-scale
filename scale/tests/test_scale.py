@@ -169,7 +169,7 @@ def gen_ts(ts_id):
              "expected_" + AvailableScaler.MinMax: ts_content_minmax,
              "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}]
 
-# Review#816: You shall remove TS you create in database for any case you test
+
 
 class TesScale(unittest.TestCase):
     """
@@ -309,7 +309,10 @@ class TesScale(unittest.TestCase):
                             atol=tolerance),
                             msg=msg)
                 finally:
+                    # Delete generated TS (from function `gen_ts`)
                     IkatsApi.ts.delete(tsuid, True)
+                    # Delete TS created by `scale_ts_list` function
+                    IkatsApi.ts.delete(result_tsuid, True)
 
     def test_spark(self):
         """
@@ -362,7 +365,10 @@ class TesScale(unittest.TestCase):
                             msg=msg)
 
                 finally:
+                    # Delete generated TS (from function `gen_ts`)
                     IkatsApi.ts.delete(tsuid, True)
+                    # Delete TS created by `scale_ts_list` function
+                    IkatsApi.ts.delete(result_tsuid, True)
 
     def test_diff_spark(self):
         """
@@ -422,4 +428,8 @@ class TesScale(unittest.TestCase):
                             atol=tolerance),
                             msg=msg)
                 finally:
+                    # Delete generated TS (from function `gen_ts`)
                     IkatsApi.ts.delete(tsuid, True)
+                    # Delete TS created by `scale_ts_list` function
+                    IkatsApi.ts.delete(result_tsuid_no_spark, True)
+                    IkatsApi.ts.delete(result_tsuid_spark, True)
