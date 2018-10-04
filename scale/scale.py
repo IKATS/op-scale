@@ -233,8 +233,7 @@ def scale(ts_list, scaler=AvailableScaler.ZNorm):
 
         # Read TS from it's ID
         ts_data = IkatsApi.ts.read([tsuid])[0]
-        # Review#498 Delete or fix comment below
-        # ts_data is np.array, shape = (2, nrow)
+        # shape = (2, nrow)
 
         LOGGER.debug("TSUID: %s, Gathering time: %.3f seconds", tsuid, time.time() - start_loading_time)
 
@@ -412,10 +411,9 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # Generate the new functional identifier (fid) for the current TS (ts_uid)
             new_fid = gen_fid(tsuid=tsuid, short_name=short_name)
 
-            # Review#816: copy/paste mistake "rollmean" (2x)
             # OPERATION: Import result by partition into database, and collect
-            # INPUT: [Timestamp, rollmean]
-            # OUTPUT: the new tsuid of the rollmean ts (not used)
+            # INPUT: [Timestamp, Value]
+            # OUTPUT: the new tsuid of the scaled ts (not used)
             scaled_data.rdd.mapPartitions(lambda x: SparkUtils.save_data(fid=new_fid, data=list(x))).collect()
 
             # Retrieve tsuid of the saved TS
@@ -539,8 +537,6 @@ def scale_ts_list(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=5000
         return scale(ts_list=tsuid_list, scaler=scaler)
 
 
-# Review#816: TODO to handle
-# TODO: put these two functions into module
 def save(tsuid, ts_result, short_name="scaled", sparkified=False):
     """
     Saves the TS into database.
@@ -562,8 +558,9 @@ def save(tsuid, ts_result, short_name="scaled", sparkified=False):
     :return: the created TSUID and its associated FID
     :rtype: str, str
 
-    # Review#816: 2 raises: TypeError and IkatsException but no IOError
-    :raise IOError: if an issue occurs during the import
+    :raises
+        * IkatsException: if an issue occurs during the import
+        * TypeError: `ts_result` not type TimestampedMonoVal
     """
     if type(ts_result) is not TimestampedMonoVal:
         raise TypeError('Arg `ts_result` is {}, expected TimestampedMonoVal'.format(type(ts_result)))

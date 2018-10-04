@@ -41,8 +41,12 @@ USE_CASE = {
     1: "Null average",
     2: "Linear curve",
     3: "Constant value",
-    4: "Portfolio"
+    4: "2 TS"
 }
+
+# TOLERANCE for tests: we assume that this tol is acceptable
+# (results between Spark and sklearn can be different at 1e-6)
+tolerance = 1e-5
 
 
 def gen_ts(ts_id):
@@ -73,9 +77,6 @@ def gen_ts(ts_id):
         # ----------------
         # scaled with Z-Norm (X - mean / correct_std)
         ts_content_znorm = np.array(ts_content[:, 1]) / np.std(ts_content[:, 1], ddof=1)
-        # Review#498: Del or fix comment
-        # Correct_std = np.std(X, ddof=1)
-        # Correct std = sqrt(1/(N-1) * sum(x - mean)^2 )
 
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
         ts_content_minmax = (np.array(ts_content[:, 1]) - -4) / (4 - -4)
@@ -93,9 +94,7 @@ def gen_ts(ts_id):
         # ----------------
         # scaled with Z-Norm (X - mean / correct_std)
         ts_content_znorm = (np.arange(9) - 4) / np.std(np.arange(9), ddof=1)
-        # Review#498: Del or fix comment
-        # Correct_std = np.std(X, ddof=1)
-        # Correct std = sqrt(1/(N-1) * sum(x - mean)^2 )
+
         # scaled with MinMax scaler (X - X.min) / (X.max - X.min)
         ts_content_minmax = np.arange(9) / 8.
         # scaled with MaxAbs scaler X / max( abs(X.max), abs(X.min)) )
@@ -118,19 +117,30 @@ def gen_ts(ts_id):
         ts_content_maxabs = np.array([1.] * 9)  # same result than previous: min=0
 
     elif ts_id == 4:
-        # CASE: Portfolio (just 2 TS)
-        # Review#816: You shall not use Portfolio in unittest
-        tsuid_list = IkatsApi.ds.read("Portfolio")['ts_list'][:2]
+        # CASE: Use 2 TS quasi identical (same mean, min, max, sd)
+        time = list(range(14879030000, 14879039000, 1000))
+        value1 = [2.3, 3.3, 4.4, 9.9, 0.1, -1.2, -12.13, 20.6, 0.0]
+        value2 = [0.0, 2.3, 3.3, 4.4, 9.9, 0.1, -1.2, -12.13, 20.6]
+
+        ts_content = np.array([np.array([time, value1]).T,
+                              np.array([time, value2]).T],
+                              np.float64)
+
+        # These 2 TS share same mean, std, ...
+        mean = np.mean(value1)
+        std = np.std(value1, ddof=1)
+        max_val = np.max(value1)
+        min_val = np.min(value1)
+        abs_max = np.max(np.abs(value1))
+
+        # Create the time series
+        tsuid_list = [IkatsApi.ts.create(fid='TU_scale_TS1', data=ts_content[0])['tsuid']]
+        tsuid_list.append(IkatsApi.ts.create(fid='TU_scale_TS2', data=ts_content[1])['tsuid'])
 
         # Fill result:
         result = []
         for tsuid in tsuid_list:
             ts_content = IkatsApi.ts.read(tsuid)[0]
-            mean = np.mean(ts_content[:, 1])
-            std = np.std(ts_content[:, 1], ddof=1)
-            max_val = np.max(ts_content[:, 1])
-            min_val = np.min(ts_content[:, 1])
-            abs_max = np.max(np.abs(ts_content[:, 1]))
 
             # Store the 3 expected results (3 scalers)
             result.append({"tsuid": tsuid,
@@ -159,35 +169,11 @@ def gen_ts(ts_id):
              "expected_" + AvailableScaler.MinMax: ts_content_minmax,
              "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}]
 
-# Review#816: You shall remove TS you create in database for any case you test
 
 class TesScale(unittest.TestCase):
     """
-    Test the scale algorithm (results are rounded with 6 digits)
+    Test the scale algorithm (results are rounded with 5 digits)
     """
-
-    # Review#816: consistency: 5 or 6 digits ?
-    # Review#816: You should use the following code instead of redefining your own (6x):
-    # self.assertTrue(np.allclose(
-    #     np.array(expected_result, dtype=np.float64),
-    #     np.array(obtained_result, dtype=np.float64),
-    #     atol=1e-6))
-
-    @staticmethod
-    def round_result(np_array, digits=5):
-        """
-        Round numpy array elements, and transform result into list.
-
-        :param np_array: The array to round
-        :type np_array: np.array
-
-        :param digits: Number of digits used after rounding (here 6)
-        :type digits: int
-
-        :return: List containing `np_array` input array, rounded.
-        :rtype: list
-        """
-        return [round(i, digits) for i in np_array]
 
     def test_scaler(self):
         """
@@ -233,12 +219,6 @@ class TesScale(unittest.TestCase):
             msg = "Testing arguments : Error in testing `ts_list` as empty list"
             with self.assertRaises(ValueError, msg=msg):
                 scale_ts_list(ts_list=[])
-
-            # Review#816: Commented test. delete or fix
-            # # non-existent TS
-            # msg = "Testing arguments : Error in testing non-existent `ts_list`"
-            # with self.assertRaises(ValueError, msg=msg):
-            #     scale_ts_list(ts_list=[{'tsuid': 'TS which does not exist'}])
 
             # scaler
             # ----------------------------
@@ -289,8 +269,7 @@ class TesScale(unittest.TestCase):
                 # CASE 1: avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
-                # Review#816 You should not use Portfolio in unit tests but create your own TS (to delete after test completion)
-                # CASE 4: Existing multi-TS (PORTFOLIO)
+                # CASE 4: 2 close TS
 
                 # result = list of dict {tsuid: , fid: , expected_Z-Norm: ...}
                 result = gen_ts(case)
@@ -298,7 +277,8 @@ class TesScale(unittest.TestCase):
                 tsuid = [x['tsuid'] for x in result]
 
                 # Expected result (rounded with k digits)
-                expected = [self.round_result(x['expected_' + scaler]) for x in result]
+                expected = [x['expected_' + scaler] for x in result]
+
                 try:
 
                     # Perform scaling, and get the resulting tsuid
@@ -313,9 +293,6 @@ class TesScale(unittest.TestCase):
                         # Get column "Value"  ([:, 1])
                         result_values_ts = result_values[ts][:, 1]
 
-                        # Round result (default k digits): else, raise error
-                        result_values_ts = self.round_result(result_values_ts)
-
                         # Standard Scaler on constant data, result = list of 0.
                         msg = "Error in result of {} 'no spark' mode (case {}):\n" \
                               " get: {},\nexpected: {}, \ndiff: {}" \
@@ -325,8 +302,11 @@ class TesScale(unittest.TestCase):
                                     expected[ts],
                                     [result_values_ts[i] - expected[ts][i] for i in range(len(expected[ts]))])
 
-                        self.assertEqual(result_values_ts, expected[ts], msg=msg)
-
+                        self.assertTrue(np.allclose(
+                            np.array(expected[ts], dtype=np.float64),
+                            np.array(result_values_ts, dtype=np.float64),
+                            atol=tolerance),
+                            msg=msg)
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
 
@@ -341,15 +321,14 @@ class TesScale(unittest.TestCase):
                 # CASE 1: avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
-                # Review#816 You should not use Portfolio in unit tests but create your own TS (to delete after test completion)
-                # CASE 4: Existing multi-TS (PORTFOLIO)
+                # CASE 4: 2 close TS
 
                 result = gen_ts(case)
                 # Get the list of tsuid
                 tsuid = [x['tsuid'] for x in result]
-                # Expected result (rounded with k digits)
-                expected = [self.round_result(x['expected_' + scaler]) for x in result]
 
+                # Expected result (rounded with k digits)
+                expected = [x['expected_' + scaler] for x in result]
                 try:
 
                     # Perform scaling, and get the resulting tsuid (force spark usage)
@@ -366,9 +345,6 @@ class TesScale(unittest.TestCase):
                         # Get column "Value"  ([:, 1])
                         result_values_ts = result_values[ts][:, 1]
 
-                        # Round result (default k digits): else, raise error
-                        result_values_ts = self.round_result(result_values_ts)
-
                         # Standard Scaler on constant data, result = list of 0.
                         msg = "Error in result of {} 'Spark' mode (case {}):\n" \
                               " get: {},\nexpected: {}, \ndiff: {}".format(scaler,
@@ -378,7 +354,11 @@ class TesScale(unittest.TestCase):
                                                                            [result_values_ts[i] - expected[ts][i] for i
                                                                             in range(len(expected[ts]))])
 
-                        self.assertEqual(result_values_ts, expected[ts], msg=msg)
+                        self.assertTrue(np.allclose(
+                            np.array(expected[ts], dtype=np.float64),
+                            np.array(result_values_ts, dtype=np.float64),
+                            atol=tolerance),
+                            msg=msg)
 
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
@@ -395,8 +375,7 @@ class TesScale(unittest.TestCase):
                 # CASE 1: avg=0
                 # CASE 2: Linear curve
                 # CASE 3: Constant value
-                # Review#816 You should not use Portfolio in unit tests but create your own TS (to delete after test completion)
-                # CASE 4: Existing multi-TS (PORTFOLIO)
+                # CASE 4: 2 close TS
 
                 result = gen_ts(case)
                 # Get the list of tsuid
@@ -422,16 +401,10 @@ class TesScale(unittest.TestCase):
                         # Get column "Value"  ([:, 1])
                         result_values_ts_spark = result_values_spark[ts][:, 1]
 
-                        # Round result (default k digits): else, raise error
-                        result_values_ts_spark = self.round_result(result_values_ts_spark)
-
                         # GET NO SPARK RESULT
                         # ------------------------
                         # Get column "Value"  ([:, 1])
                         result_values_ts_no_spark = result_values_no_spark[ts][:, 1]
-
-                        # Round result (default k digits): else, raise error
-                        result_values_ts_no_spark = self.round_result(result_values_ts_no_spark)
 
                         msg = "Error in compare Spark/no spark: case {} ({}) \n" \
                               "Result Spark: {} \n" \
@@ -442,8 +415,10 @@ class TesScale(unittest.TestCase):
                                                       result_values_ts_no_spark,
                                                       [result_values_ts_spark[i] - result_values_ts_no_spark[i] for i
                                                        in range(len(result_values_ts_no_spark))])
-
-                        self.assertEqual(result_values_ts_spark, result_values_ts_no_spark, msg=msg)
-
+                        self.assertTrue(np.allclose(
+                            np.array(result_values_ts_spark, dtype=np.float64),
+                            np.array(result_values_ts_no_spark, dtype=np.float64),
+                            atol=tolerance),
+                            msg=msg)
                 finally:
                     IkatsApi.ts.delete(tsuid, True)
