@@ -558,9 +558,8 @@ def save(tsuid, ts_result, short_name="scaled", sparkified=False):
     :return: the created TSUID and its associated FID
     :rtype: str, str
 
-    :raises
-        * IkatsException: if an issue occurs during the import
-        * TypeError: `ts_result` not type TimestampedMonoVal
+    :raises IkatsException: if an issue occurs during the import
+    :raises TypeError: if `ts_result` not type TimestampedMonoVal
     """
     if type(ts_result) is not TimestampedMonoVal:
         raise TypeError('Arg `ts_result` is {}, expected TimestampedMonoVal'.format(type(ts_result)))

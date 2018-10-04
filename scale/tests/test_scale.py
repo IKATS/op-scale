@@ -117,7 +117,7 @@ def gen_ts(ts_id):
         ts_content_maxabs = np.array([1.] * 9)  # same result than previous: min=0
 
     elif ts_id == 4:
-        # CASE: Use 2 TS quasi identical (same mean, min, max, sd)
+        # CASE: Use 2 TS nearly identical (same mean, min, max, sd)
         time = list(range(14879030000, 14879039000, 1000))
         value1 = [2.3, 3.3, 4.4, 9.9, 0.1, -1.2, -12.13, 20.6, 0.0]
         value2 = [0.0, 2.3, 3.3, 4.4, 9.9, 0.1, -1.2, -12.13, 20.6]
@@ -169,10 +169,11 @@ def gen_ts(ts_id):
              "expected_" + AvailableScaler.MinMax: ts_content_minmax,
              "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}]
 
+# Review#816: You shall remove TS you create in database for any case you test
 
 class TesScale(unittest.TestCase):
     """
-    Test the scale algorithm (results are rounded with 5 digits)
+    Test the scale operator (results are rounded to 5 digits)
     """
 
     def test_scaler(self):
