@@ -170,11 +170,20 @@ def gen_ts(ts_id):
              "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}]
 
 
-
 class TesScale(unittest.TestCase):
     """
     Test the scale operator (results are rounded to 5 digits)
     """
+
+    @staticmethod
+    def clean_up_db(ts_info):
+        """
+        Clean up the database by removing created TS
+        :param ts_info: list of TS to remove
+        """
+        for ts_item in ts_info:
+            # Delete created TS
+            IkatsApi.ts.delete(tsuid=ts_item['tsuid'], no_exception=True)
 
     def test_scaler(self):
         """
@@ -204,6 +213,7 @@ class TesScale(unittest.TestCase):
         """
         Testing behaviour when wrong arguments on function `scale_ts_list`.
         """
+
         # Get the TSUID of the saved TS
         tsuid_list = gen_ts(1)
 
@@ -232,7 +242,7 @@ class TesScale(unittest.TestCase):
             # wrong element (not in SCALER_DICT)
             msg = "Testing arguments : Error in testing `scale` unexpected value"
             with self.assertRaises(ValueError, msg=msg):
-                scale_ts_list(ts_list=tsuid_list, scaler="Scaler which does not exist")
+               scale_ts_list(ts_list=tsuid_list, scaler="Scaler which does not exist")
 
             # nb_points_by_chunk
             # ----------------------------
@@ -256,7 +266,7 @@ class TesScale(unittest.TestCase):
 
         finally:
             # Clean up database
-            IkatsApi.ts.delete(tsuid_list[0]['tsuid'], True)
+            self.clean_up_db(tsuid_list)
 
     def test_scale_value(self):
         """
@@ -274,8 +284,6 @@ class TesScale(unittest.TestCase):
 
                 # result = list of dict {tsuid: , fid: , expected_Z-Norm: ...}
                 result = gen_ts(case)
-                # Get the list of tsuid
-                tsuid = [x['tsuid'] for x in result]
 
                 # Expected result (rounded with k digits)
                 expected = [x['expected_' + scaler] for x in result]
@@ -283,9 +291,10 @@ class TesScale(unittest.TestCase):
                 try:
 
                     # Perform scaling, and get the resulting tsuid
-                    result_tsuid = [x['tsuid'] for x in scale_ts_list(result, scaler=scaler, spark=False)]
+                    result_scale = scale_ts_list(result, scaler=scaler, spark=False)
                     # `result_tsuid`: list of str: ['tsuid1', 'tsuid2', ...]
 
+                    result_tsuid = [x['tsuid'] for x in result_scale]
                     # List of TS [ [[time1, value1], [time2, value2],...] ]
                     result_values = IkatsApi.ts.read(result_tsuid)
 
@@ -310,9 +319,9 @@ class TesScale(unittest.TestCase):
                             msg=msg)
                 finally:
                     # Delete generated TS (from function `gen_ts`)
-                    IkatsApi.ts.delete(tsuid, True)
+                    self.clean_up_db(result)
                     # Delete TS created by `scale_ts_list` function
-                    IkatsApi.ts.delete(result_tsuid, True)
+                    self.clean_up_db(result_scale)
 
     def test_spark(self):
         """
@@ -328,17 +337,15 @@ class TesScale(unittest.TestCase):
                 # CASE 4: 2 close TS
 
                 result = gen_ts(case)
-                # Get the list of tsuid
-                tsuid = [x['tsuid'] for x in result]
 
                 # Expected result (rounded with k digits)
                 expected = [x['expected_' + scaler] for x in result]
                 try:
 
-                    # Perform scaling, and get the resulting tsuid (force spark usage)
-                    result_tsuid = [x['tsuid'] for x in scale_ts_list(result,
-                                                                      scaler=scaler,
-                                                                      spark=True)]
+                    # Perform scaling, and get the resulting tsuid
+                    result_scale = scale_ts_list(result, scaler=scaler, spark=True)
+
+                    result_tsuid = [x['tsuid'] for x in result_scale]
                     # `result_tsuid`: list of str: ['tsuid1', 'tsuid2', ...]
 
                     # List of TS [ [[time1, value1], [time2, value2],...] ]
@@ -366,9 +373,9 @@ class TesScale(unittest.TestCase):
 
                 finally:
                     # Delete generated TS (from function `gen_ts`)
-                    IkatsApi.ts.delete(tsuid, True)
+                    self.clean_up_db(result)
                     # Delete TS created by `scale_ts_list` function
-                    IkatsApi.ts.delete(result_tsuid, True)
+                    self.clean_up_db(result_scale)
 
     def test_diff_spark(self):
         """
@@ -385,20 +392,22 @@ class TesScale(unittest.TestCase):
                 # CASE 4: 2 close TS
 
                 result = gen_ts(case)
-                # Get the list of tsuid
-                tsuid = [x['tsuid'] for x in result]
+
                 try:
                     # GET SPARK RESULT
                     # ------------------------
                     # Perform scaling, and get the resulting tsuid (force spark usage)
-                    result_tsuid_spark = [x['tsuid'] for x in scale_ts_list(result, scaler=scaler, spark=True)]
+                    result_spark = scale_ts_list(result, scaler=scaler, spark=True)
+
+                    result_tsuid_spark = [x['tsuid'] for x in result_spark]
                     # `result_tsuid`: list of str: ['tsuid1', 'tsuid2', ...]
                     # List of TS [ [[time1, value1], [time2, value2],...] ]
                     result_values_spark = IkatsApi.ts.read(result_tsuid_spark)
 
                     # GET NO SPARK RESULT
                     # ------------------------
-                    result_tsuid_no_spark = [x['tsuid'] for x in scale_ts_list(result, scaler=scaler, spark=False)]
+                    result_no_spark = scale_ts_list(result, scaler=scaler, spark=False)
+                    result_tsuid_no_spark = [x['tsuid'] for x in result_no_spark]
                     result_values_no_spark = IkatsApi.ts.read(result_tsuid_no_spark)
 
                     # For each ts result
@@ -429,7 +438,9 @@ class TesScale(unittest.TestCase):
                             msg=msg)
                 finally:
                     # Delete generated TS (from function `gen_ts`)
-                    IkatsApi.ts.delete(tsuid, True)
+                    self.clean_up_db(result)
                     # Delete TS created by `scale_ts_list` function
-                    IkatsApi.ts.delete(result_tsuid_no_spark, True)
-                    IkatsApi.ts.delete(result_tsuid_spark, True)
+                    self.clean_up_db(result_no_spark)
+                    # Delete TS created by `scale_ts_list` function
+                    self.clean_up_db(result_spark)
+
