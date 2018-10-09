@@ -23,7 +23,6 @@ import sklearn.preprocessing
 from ikats.algo.scale.scale import AvailableScaler, Scaler, scale_ts_list, SCALER_DICT
 from ikats.core.resource.api import IkatsApi
 
-
 # Set LOGGER
 LOGGER = logging.getLogger()
 # Log format
@@ -123,7 +122,7 @@ def gen_ts(ts_id):
         value2 = [0.0, 2.3, 3.3, 4.4, 9.9, 0.1, -1.2, -12.13, 20.6]
 
         ts_content = np.array([np.array([time, value1]).T,
-                              np.array([time, value2]).T],
+                               np.array([time, value2]).T],
                               np.float64)
 
         # These 2 TS share same mean, std, ...
@@ -134,8 +133,8 @@ def gen_ts(ts_id):
         abs_max = np.max(np.abs(value1))
 
         # Create the time series
-        tsuid_list = [IkatsApi.ts.create(fid='TU_scale_TS1', data=ts_content[0])['tsuid']]
-        tsuid_list.append(IkatsApi.ts.create(fid='TU_scale_TS2', data=ts_content[1])['tsuid'])
+        tsuid_list = [IkatsApi.ts.create(fid='TU_scale_TS1', data=ts_content[0])['tsuid'],
+                      IkatsApi.ts.create(fid='TU_scale_TS2', data=ts_content[1])['tsuid']]
 
         # Fill result:
         result = []
@@ -170,7 +169,7 @@ def gen_ts(ts_id):
              "expected_" + AvailableScaler.MaxAbs: ts_content_maxabs}]
 
 
-class TesScale(unittest.TestCase):
+class TestScale(unittest.TestCase):
     """
     Test the scale operator (results are rounded to 5 digits)
     """
@@ -242,7 +241,7 @@ class TesScale(unittest.TestCase):
             # wrong element (not in SCALER_DICT)
             msg = "Testing arguments : Error in testing `scale` unexpected value"
             with self.assertRaises(ValueError, msg=msg):
-               scale_ts_list(ts_list=tsuid_list, scaler="Scaler which does not exist")
+                scale_ts_list(ts_list=tsuid_list, scaler="Scaler which does not exist")
 
             # nb_points_by_chunk
             # ----------------------------
@@ -443,4 +442,3 @@ class TesScale(unittest.TestCase):
                     self.clean_up_db(result_no_spark)
                     # Delete TS created by `scale_ts_list` function
                     self.clean_up_db(result_spark)
-

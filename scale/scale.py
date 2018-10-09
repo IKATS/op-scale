@@ -343,10 +343,10 @@ def spark_scale(ts_list, scaler=AvailableScaler.ZNorm, nb_points_by_chunk=50000)
             # --------------------------------------------------------------------------
             # Import data into dataframe (["Index", "Timestamp", "Value"])
             df, _ = SSessionManager.get_ts_by_chunks_as_df(tsuid=tsuid,
-                                                              sd=sd,
-                                                              ed=ed,
-                                                              period=period,
-                                                              nb_points_by_chunk=nb_points_by_chunk)
+                                                           sd=sd,
+                                                           ed=ed,
+                                                           period=period,
+                                                           nb_points_by_chunk=nb_points_by_chunk)
 
             # 3/ Calculate scaling
             # -------------------------------
